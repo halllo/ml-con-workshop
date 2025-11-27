@@ -1,0 +1,373 @@
+# Module 3: Production-Ready Kubernetes Deployment
+# =================================================
+#
+# In this exercise, you'll deploy a complete production-ready ML service to Kubernetes
+# with all the features needed for real-world production use.
+#
+# What you'll implement (20 TODOs):
+# - Deployment with proper configuration
+# - Service for network access
+# - ConfigMap for environment variables
+# - Resource requests and limits
+# - All three health probe types
+# - Horizontal Pod Autoscaler (auto-scaling)
+# - Pod Disruption Budget (availability)
+# - Security hardening
+# - High availability (anti-affinity)
+# Each TODO has inline hints showing exactly what to configure.
+# Look for: # YOUR CODE HERE
+
+---
+# =============================================================================
+# CONFIGMAP - Externalized Configuration
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+
+metadata:
+  name: sentiment-api-config
+  labels:
+    app: sentiment-api
+    environment: production
+
+data:
+  # TODO 1: Set BENTOML_PORT to "3000"
+  # YOUR CODE HERE
+  BENTOML_PORT: ""  # FILL IN: Port number as string
+
+  # TODO 2: Set WORKERS to "2"
+  # YOUR CODE HERE
+  WORKERS: ""  # FILL IN: Number of worker processes
+
+  LOG_LEVEL: "INFO"
+  MODEL_LOAD_TIMEOUT: "30"
+  REQUEST_TIMEOUT: "10"
+  # Note: BentoML has built-in metrics on /metrics endpoint (same port as service)
+
+---
+# =============================================================================
+# DEPLOYMENT - Main Application
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  # TODO 3: Set deployment name to "sentiment-api"
+  # YOUR CODE HERE
+  name: ""  # FILL IN: Deployment name
+
+  labels:
+    app: sentiment-api
+    module: module-3
+    environment: production
+    version: v1
+
+spec:
+  # Initial replicas (HPA will adjust this dynamically)
+  # TODO 4: Set replicas to 2
+  # YOUR CODE HERE
+  replicas: 0  # FILL IN: Number of initial replicas
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+
+  progressDeadlineSeconds: 600
+  revisionHistoryLimit: 5
+
+  selector:
+    # TODO 5: Add matchLabels with app: sentiment-api
+    # YOUR CODE HERE
+    matchLabels:
+      # FILL IN: Label selector
+
+  template:
+    metadata:
+      labels:
+        # TODO 6: Add pod labels - app: sentiment-api, version: v1, environment: production
+        # YOUR CODE HERE
+        # FILL IN: Pod labels (3 labels needed)
+
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/metrics"
+
+    spec:
+      # =================================================================
+      # SECURITY CONTEXT (Pod-level)
+      # =================================================================
+      # NOTE: BentoML containers require relaxed security for proper operation
+      # In production, adjust these settings based on your security requirements
+      securityContext:
+        # TODO 7: Set runAsNonRoot to false (BentoML needs write access)
+        # YOUR CODE HERE
+        runAsNonRoot: false  # FILL IN: Set to false for BentoML
+
+        # TODO 8: Set runAsUser to 0 (root) for BentoML compatibility
+        # YOUR CODE HERE
+        runAsUser: 0  # FILL IN: User ID (0 = root for BentoML)
+
+        runAsGroup: 0
+        fsGroup: 0
+
+      # =================================================================
+      # POD ANTI-AFFINITY (High Availability)
+      # =================================================================
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                # TODO 9: Match pods with app=sentiment-api
+                # YOUR CODE HERE
+                - key: ""  # FILL IN: Label key to match
+                  operator: In
+                  values:
+                  - ""  # FILL IN: Label value to match
+
+              # TODO 10: Set topologyKey to "kubernetes.io/hostname"
+              # This spreads pods across different nodes
+              # YOUR CODE HERE
+              topologyKey: ""  # FILL IN: Topology key for node spreading
+
+      terminationGracePeriodSeconds: 30
+
+      containers:
+      - # TODO 11: Set container name to "sentiment-api"
+        # YOUR CODE HERE
+        name: ""  # FILL IN: Container name
+
+        # TODO 12: Set image to "sentiment_service:v1"
+        # YOUR CODE HERE
+        image: ""  # FILL IN: Docker image name
+
+        # TODO 13: Set imagePullPolicy to "Never" (for kind)
+        # YOUR CODE HERE
+        imagePullPolicy: ""  # FILL IN: Pull policy (Never, Always, or IfNotPresent)
+
+        ports:
+        - name: http
+          # TODO 14: Set containerPort to 3000
+          # YOUR CODE HERE
+          containerPort: 0  # FILL IN: Port number
+
+          protocol: TCP
+
+        # Note: BentoML exposes /metrics on the same port (3000)
+        # No need for a separate metrics port
+
+        # =================================================================
+        # SECURITY CONTEXT (Container-level)
+        # =================================================================
+        # NOTE: BentoML requires write access to filesystem
+        # readOnlyRootFilesystem: true causes permission errors
+        securityContext:
+          # TODO 15: Set allowPrivilegeEscalation to false
+          # YOUR CODE HERE
+          allowPrivilegeEscalation: false  # FILL IN: Should be false
+
+          # TODO 16: Set readOnlyRootFilesystem to false (BentoML needs write access)
+          # YOUR CODE HERE
+          readOnlyRootFilesystem: false  # FILL IN: Must be false for BentoML
+
+          # Note: Removing capabilities drop for BentoML compatibility
+
+        # =================================================================
+        # RESOURCES (Critical for HPA and QoS)
+        # =================================================================
+        resources:
+          requests:
+            # TODO 17: Set CPU request to "500m" (0.5 cores)
+            # YOUR CODE HERE
+            cpu: ""  # FILL IN: CPU request
+
+            # TODO 18: Set memory request to "1Gi"
+            # YOUR CODE HERE
+            memory: ""  # FILL IN: Memory request
+
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+
+        # Environment variables from ConfigMap
+        envFrom:
+        - configMapRef:
+            name: sentiment-api-config
+
+        # Writable volumes (needed because root filesystem is read-only)
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: bentoml-cache
+          mountPath: /home/bentoml/.bentoml
+        - name: transformers-cache
+          mountPath: /tmp/transformers_cache
+
+        # =================================================================
+        # HEALTH PROBES
+        # =================================================================
+
+        # Startup Probe: Handles slow model loading (30-60 seconds)
+        # TODO 19: Configure startup probe
+        # YOUR CODE HERE
+        startupProbe:
+          httpGet:
+            path: ""  # FILL IN: Health check endpoint (/healthz)
+            port: 0   # FILL IN: Port number (3000)
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 60  # 60 × 5s = 5 minutes max startup time
+
+        # Liveness Probe: Detects crashed containers
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 3000
+          initialDelaySeconds: 0
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+        # Readiness Probe: Controls traffic routing
+        # TODO 20: Configure readiness probe
+        # YOUR CODE HERE
+        readinessProbe:
+          httpGet:
+            path: ""  # FILL IN: Health check endpoint (/healthz)
+            port: 0   # FILL IN: Port number (3000)
+          initialDelaySeconds: 0
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+
+      # Volumes for writable locations
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: bentoml-cache
+        emptyDir: {}
+      - name: transformers-cache
+        emptyDir:
+          sizeLimit: 2Gi
+
+---
+# =============================================================================
+# SERVICE - Network Endpoint
+# =============================================================================
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: sentiment-api-service
+  labels:
+    app: sentiment-api
+
+spec:
+  type: NodePort
+
+  selector:
+    app: sentiment-api
+
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 3000
+    nodePort: 30080
+
+---
+# =============================================================================
+# HORIZONTAL POD AUTOSCALER (Auto-scaling)
+# =============================================================================
+#
+# HPA automatically scales pods based on CPU/memory usage
+# Scales between min (2) and max (10) replicas
+#
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+
+metadata:
+  name: sentiment-api-hpa
+  labels:
+    app: sentiment-api
+
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sentiment-api
+
+  minReplicas: 2
+  maxReplicas: 10
+
+  metrics:
+  # Scale based on CPU utilization
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70  # Target 70% CPU
+
+  # Scale based on memory utilization
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80  # Target 80% memory
+
+  # Fine-tuned scaling behavior for ML workloads
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      selectPolicy: Max
+
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5 minutes
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 120
+      - type: Percent
+        value: 10
+        periodSeconds: 120
+      selectPolicy: Min
+
+---
+# =============================================================================
+# POD DISRUPTION BUDGET (Availability Guarantee)
+# =============================================================================
+#
+# PDB ensures at least 1 pod is always available during:
+# - Node maintenance (kubectl drain)
+# - Rolling updates
+# - Cluster autoscaling
+#
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+
+metadata:
+  name: sentiment-api-pdb
+  labels:
+    app: sentiment-api
+
+spec:
+  selector:
+    matchLabels:
+      app: sentiment-api
+
+  minAvailable: 1  # At least 1 pod must always be running

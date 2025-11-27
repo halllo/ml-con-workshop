@@ -1,0 +1,26 @@
+# Module 1: Model Training & Experiment Tracking
+# Python 3.9+ recommended
+
+# Core ML frameworks
+transformers>=4.35.0
+torch>=2.0.0
+torchvision
+datasets>=2.14.0
+accelerate>=0.26.0
+
+# MLflow for experiment tracking
+mlflow>=2.8.0
+
+# Metrics and evaluation
+scikit-learn>=1.3.0
+numpy>=1.24.0
+
+# Utilities
+tqdm>=4.66.0
+
+# Testing
+pytest>=7.4.0
+
+# Optional: For Jupyter notebooks
+jupyter>=1.0.0
+ipywidgets>=8.1.0

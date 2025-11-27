@@ -1,0 +1,200 @@
+# ConfigMap for Gateway Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-config
+  labels:
+    app: api-gateway
+    module: module-4
+
+data:
+  # Gateway listens on this port
+  GATEWAY_PORT: "8080"
+
+  # Backend ML service (from Module 3)
+  # Uses Kubernetes service name for service discovery
+  BACKEND_URL: "http://sentiment-api-service:80"
+
+  # Logging configuration
+  LOG_LEVEL: "info"  # Options: debug, info, warn, error
+
+  # Environment identifier
+  ENVIRONMENT: "production"
+
+---
+# Deployment for API Gateway
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+    module: module-4
+    tier: frontend
+
+spec:
+  # Start with 2 replicas for HA
+  replicas: 2
+
+  # Update strategy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+
+  selector:
+    matchLabels:
+      app: api-gateway
+
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        version: v2
+      annotations:
+        # Prometheus scraping
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+
+    spec:
+      containers:
+      - name: api-gateway
+        image: api-gateway:v1
+        imagePullPolicy: Never  # For kind local testing
+
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+
+        # Environment from ConfigMap
+        envFrom:
+        - configMapRef:
+            name: api-gateway-config
+
+        # Resource limits (Gateway is lightweight!)
+        resources:
+          requests:
+            cpu: "100m"      # 0.1 CPU core
+            memory: "64Mi"   # 64 MB
+          limits:
+            cpu: "200m"      # 0.2 CPU core
+            memory: "128Mi"  # 128 MB
+
+        # Health probes
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 3
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 2
+
+        # Security context
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532  # nonroot user from distroless
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+
+---
+# Service for API Gateway
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-service
+  labels:
+    app: api-gateway
+
+spec:
+  type: NodePort
+  selector:
+    app: api-gateway
+
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80           # Service port
+    targetPort: 8080   # Container port
+    nodePort: 30070    # External access (different from ML service's 30080)
+
+---
+# HorizontalPodAutoscaler for Gateway
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway-hpa
+  labels:
+    app: api-gateway
+
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+
+  minReplicas: 2
+  maxReplicas: 10
+
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30  # Gateway scales faster than ML service
+      policies:
+      - type: Percent
+        value: 100  # Double when needed
+        periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 60  # Still conservative
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+
+---
+# PodDisruptionBudget for Gateway
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api-gateway-pdb
+  labels:
+    app: api-gateway
+
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  minAvailable: 1

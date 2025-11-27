@@ -1,0 +1,549 @@
+# Prometheus Deployment for MLOps Monitoring
+# ============================================
+#
+# This manifest deploys Prometheus to monitor:
+# - API Gateway (Go service)
+# - ML Service (Python/BentoML)
+# - Kubernetes cluster metrics
+#
+# Prometheus scrapes metrics from /metrics endpoints and stores time-series data.
+
+---
+# ConfigMap: Prometheus Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  labels:
+    app: prometheus
+
+data:
+  prometheus.yml: |
+    # Global configuration
+    global:
+      scrape_interval: 15s      # How often to scrape targets
+      evaluation_interval: 15s  # How often to evaluate rules
+      external_labels:
+        cluster: 'mlops-workshop'
+        environment: 'kind'
+
+    # Alerting configuration
+    alerting:
+      alertmanagers:
+      - static_configs:
+        - targets: []
+          # Add alertmanager:9093 when deployed
+
+    # Rule files
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    # Scrape configurations
+    scrape_configs:
+      # =================================================================
+      # Prometheus itself
+      # =================================================================
+      - job_name: 'prometheus'
+        static_configs:
+        - targets: ['localhost:9090']
+
+      # =================================================================
+      # API Gateway (Go service)
+      # =================================================================
+      - job_name: 'api-gateway'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - default
+
+        relabel_configs:
+        # Only scrape pods with prometheus.io/scrape: "true"
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+
+        # Use custom port if specified
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port]
+          action: replace
+          target_label: __address__
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+
+        # Use custom metrics path if specified
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+
+        # Add pod labels as metric labels
+        - source_labels: [__meta_kubernetes_pod_label_app]
+          action: keep
+          regex: api-gateway
+
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+
+      # =================================================================
+      # ML Service (Python/BentoML)
+      # =================================================================
+      - job_name: 'ml-service'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - default
+
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port]
+          action: replace
+          target_label: __address__
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+
+        - source_labels: [__meta_kubernetes_pod_label_app]
+          action: keep
+          regex: sentiment-api
+
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+
+      # =================================================================
+      # Kubernetes API Server
+      # =================================================================
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+        - role: endpoints
+
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: default;kubernetes;https
+
+      # =================================================================
+      # Kubernetes Nodes
+      # =================================================================
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+        - role: node
+
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+
+      # =================================================================
+      # Kubernetes Pods (generic discovery)
+      # =================================================================
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+        - role: pod
+
+        relabel_configs:
+        # Only scrape pods with prometheus.io/scrape: "true"
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+
+        # Add namespace label
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+
+        # Add pod name label
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: kubernetes_pod_name
+
+---
+# ConfigMap: Alerting Rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  labels:
+    app: prometheus
+
+data:
+  mlops-alerts.yml: |
+    groups:
+    - name: mlops_alerts
+      interval: 30s
+      rules:
+      # =================================================================
+      # API Gateway Alerts
+      # =================================================================
+
+      # High error rate
+      - alert: GatewayHighErrorRate
+        expr: |
+          rate(gateway_http_requests_total{status=~"5.."}[5m])
+          /
+          rate(gateway_http_requests_total[5m])
+          > 0.05
+        for: 2m
+        labels:
+          severity: warning
+          component: api-gateway
+        annotations:
+          summary: "API Gateway error rate above 5%"
+          description: "Gateway {{ $labels.pod }} has {{ $value | humanizePercentage }} error rate"
+
+      # High latency
+      - alert: GatewayHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            rate(gateway_http_request_duration_seconds_bucket[5m])
+          ) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          component: api-gateway
+        annotations:
+          summary: "API Gateway P95 latency above 1s"
+          description: "Gateway {{ $labels.pod }} P95 latency is {{ $value }}s"
+
+      # Gateway down
+      - alert: GatewayDown
+        expr: up{job="api-gateway"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: api-gateway
+        annotations:
+          summary: "API Gateway is down"
+          description: "Gateway pod {{ $labels.pod }} is unreachable"
+
+      # =================================================================
+      # ML Service Alerts
+      # =================================================================
+
+      # ML service down
+      - alert: MLServiceDown
+        expr: up{job="ml-service"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: ml-service
+        annotations:
+          summary: "ML Service is down"
+          description: "ML service pod {{ $labels.pod }} is unreachable"
+
+      # High backend latency
+      - alert: MLServiceSlowInference
+        expr: |
+          histogram_quantile(0.95,
+            rate(gateway_backend_request_duration_seconds_bucket[5m])
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          component: ml-service
+        annotations:
+          summary: "ML inference P95 latency above 2s"
+          description: "ML service latency is {{ $value }}s (threshold: 2s)"
+
+      # =================================================================
+      # Resource Alerts
+      # =================================================================
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: |
+          container_memory_usage_bytes{pod=~"(api-gateway|sentiment-api).*"}
+          /
+          container_spec_memory_limit_bytes{pod=~"(api-gateway|sentiment-api).*"}
+          > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pod using >90% of memory limit"
+          description: "Pod {{ $labels.pod }} is using {{ $value | humanizePercentage }} of memory limit"
+
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: |
+          rate(container_cpu_usage_seconds_total{pod=~"(api-gateway|sentiment-api).*"}[5m])
+          /
+          (container_spec_cpu_quota{pod=~"(api-gateway|sentiment-api).*"} / 100000)
+          > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pod using >90% of CPU limit"
+          description: "Pod {{ $labels.pod }} is using {{ $value | humanizePercentage }} of CPU limit"
+
+      # =================================================================
+      # HPA Alerts
+      # =================================================================
+
+      # HPA at max replicas
+      - alert: HPAMaxedOut
+        expr: |
+          kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler=~"(api-gateway|sentiment-api).*"}
+          ==
+          kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=~"(api-gateway|sentiment-api).*"}
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HPA reached maximum replicas"
+          description: "HPA {{ $labels.horizontalpodautoscaler }} is at max replicas, may need to increase limit"
+
+---
+# ServiceAccount for Prometheus
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  labels:
+    app: prometheus
+
+---
+# ClusterRole for Prometheus (read K8s metrics)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+  labels:
+    app: prometheus
+
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/proxy
+  - services
+  - endpoints
+  - pods
+  verbs: ["get", "list", "watch"]
+
+- apiGroups: ["extensions", "apps"]
+  resources:
+  - deployments
+  - replicasets
+  verbs: ["get", "list", "watch"]
+
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+  labels:
+    app: prometheus
+
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: default
+
+---
+# Prometheus Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  labels:
+    app: prometheus
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: prometheus
+
+  template:
+    metadata:
+      labels:
+        app: prometheus
+
+    spec:
+      serviceAccountName: prometheus
+
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.48.0
+
+        args:
+        - '--config.file=/etc/prometheus/prometheus.yml'
+        - '--storage.tsdb.path=/prometheus'
+        - '--storage.tsdb.retention.time=7d'
+        - '--web.enable-lifecycle'
+        - '--web.enable-admin-api'
+
+        ports:
+        - name: web
+          containerPort: 9090
+
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus
+        - name: rules
+          mountPath: /etc/prometheus/rules
+        - name: storage
+          mountPath: /prometheus
+
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 9090
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+
+      - name: rules
+        configMap:
+          name: prometheus-rules
+
+      - name: storage
+        emptyDir: {}
+        # For production, use PersistentVolumeClaim:
+        # persistentVolumeClaim:
+        #   claimName: prometheus-storage
+
+---
+# Prometheus Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  labels:
+    app: prometheus
+
+spec:
+  type: NodePort
+
+  selector:
+    app: prometheus
+
+  ports:
+  - name: web
+    port: 9090
+    targetPort: 9090
+    nodePort: 30900
+
+---
+# PersistentVolumeClaim for Prometheus (optional, for data persistence)
+# Commented out for kind (uses emptyDir instead)
+# Uncomment for production:
+#
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: prometheus-storage
+#   labels:
+#     app: prometheus
+# spec:
+#   accessModes:
+#   - ReadWriteOnce
+#   resources:
+#     requests:
+#       storage: 10Gi
+
+# =============================================================================
+# DEPLOYMENT INSTRUCTIONS
+# =============================================================================
+#
+# 1. Deploy Prometheus:
+#    kubectl apply -f prometheus-deployment.yaml
+#
+# 2. Wait for pod to be ready:
+#    kubectl wait --for=condition=ready pod -l app=prometheus --timeout=120s
+#
+# 3. Access Prometheus UI:
+#    # Option A: Port forward
+#    kubectl port-forward svc/prometheus 9090:9090
+#    # Then visit: http://localhost:9090
+#
+#    # Option B: NodePort (kind)
+#    # Visit: http://localhost:30900
+#
+# 4. Verify targets are being scraped:
+#    In Prometheus UI: Status → Targets
+#    Should see: api-gateway, ml-service, kubernetes-*
+#
+# 5. Test a query:
+#    rate(gateway_http_requests_total[5m])
+#
+# 6. View alerts:
+#    In Prometheus UI: Alerts
+#
+# =============================================================================
+# USEFUL PROMETHEUS QUERIES
+# =============================================================================
+#
+# Request rate (req/sec):
+#   rate(gateway_http_requests_total[5m])
+#
+# Error rate:
+#   rate(gateway_http_requests_total{status=~"5.."}[5m])
+#
+# P95 latency:
+#   histogram_quantile(0.95, rate(gateway_http_request_duration_seconds_bucket[5m]))
+#
+# Backend latency (ML inference time):
+#   histogram_quantile(0.95, rate(gateway_backend_request_duration_seconds_bucket[5m]))
+#
+# Memory usage:
+#   container_memory_usage_bytes{pod=~"api-gateway.*"}
+#
+# CPU usage:
+#   rate(container_cpu_usage_seconds_total{pod=~"api-gateway.*"}[5m])
+#
+# Pods by status:
+#   kube_pod_status_phase{namespace="default"}
+#
+# HPA current replicas:
+#   kube_horizontalpodautoscaler_status_current_replicas
+#
+# =============================================================================

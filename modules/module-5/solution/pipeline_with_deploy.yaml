@@ -1,0 +1,598 @@
+# PIPELINE DEFINITION
+# Name: movie-recommendation-pipeline
+# Description: End-to-end pipeline for training and deploying movie recommendation model
+# Inputs:
+#    canary_traffic_percent: int [Default: 0.0]
+#    dataset_size: str [Default: '100k']
+#    deploy_model_flag: bool [Default: True]
+#    n_components: int [Default: 20.0]
+#    random_state: int [Default: 42.0]
+#    test_ratio: float [Default: 0.2]
+components:
+  comp-condition-1:
+    dag:
+      tasks:
+        deploy-model:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-deploy-model
+          inputs:
+            artifacts:
+              model:
+                componentInputArtifact: pipelinechannel--train-model-model
+            parameters:
+              canary_traffic_percent:
+                componentInputParameter: pipelinechannel--canary_traffic_percent
+              namespace:
+                runtimeValue:
+                  constant: default
+              service_name:
+                runtimeValue:
+                  constant: movie-recommender
+          taskInfo:
+            name: Deploy to KServe
+    inputDefinitions:
+      artifacts:
+        pipelinechannel--train-model-model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        pipelinechannel--canary_traffic_percent:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--deploy_model_flag:
+          parameterType: BOOLEAN
+  comp-deploy-model:
+    executorLabel: exec-deploy-model
+    inputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+          description: Input trained model
+      parameters:
+        canary_traffic_percent:
+          defaultValue: 0.0
+          description: Percentage of traffic for canary (0-100)
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        namespace:
+          defaultValue: default
+          description: Kubernetes namespace
+          isOptional: true
+          parameterType: STRING
+        service_name:
+          defaultValue: movie-recommender
+          description: Name for the KServe InferenceService
+          isOptional: true
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-evaluate-model:
+    executorLabel: exec-evaluate-model
+    inputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+          description: Input trained model
+        test_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+          description: Input test dataset
+    outputDefinitions:
+      artifacts:
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-prepare-data:
+    executorLabel: exec-prepare-data
+    inputDefinitions:
+      parameters:
+        dataset_size:
+          defaultValue: 100k
+          description: Size of dataset to download (100k, 1m, etc.)
+          isOptional: true
+          parameterType: STRING
+        random_state:
+          defaultValue: 42.0
+          description: Random seed for reproducibility
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        test_ratio:
+          defaultValue: 0.2
+          description: Fraction of data for test set
+          isOptional: true
+          parameterType: NUMBER_DOUBLE
+    outputDefinitions:
+      artifacts:
+        movies_metadata:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        test_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        train_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-train-model:
+    executorLabel: exec-train-model
+    inputDefinitions:
+      artifacts:
+        movies_metadata:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        train_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+          description: Input training dataset
+      parameters:
+        n_components:
+          defaultValue: 20.0
+          description: Number of latent factors for SVD
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        random_state:
+          defaultValue: 42.0
+          description: Random seed
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      artifacts:
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-deploy-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - deploy_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kubernetes==28.1.0'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.6'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef deploy_model(\n    model: Input[Model],\n    service_name: str\
+          \ = \"movie-recommender\",\n    namespace: str = \"default\",\n    canary_traffic_percent:\
+          \ int = 0\n) -> str:\n    \"\"\"\n    Deploy model to KServe\n\n    Args:\n\
+          \        model: Input trained model\n        service_name: Name for the\
+          \ KServe InferenceService\n        namespace: Kubernetes namespace\n   \
+          \     canary_traffic_percent: Percentage of traffic for canary (0-100)\n\
+          \n    Returns:\n        Deployment status message\n    \"\"\"\n    from\
+          \ kubernetes import client, config\n    import logging\n    import json\n\
+          \n    logging.basicConfig(level=logging.INFO)\n    logger = logging.getLogger(__name__)\n\
+          \n    # Load Kubernetes config\n    try:\n        config.load_incluster_config()\n\
+          \    except:\n        config.load_kube_config()\n\n    # Create KServe InferenceService\
+          \ manifest\n    inference_service = {\n        \"apiVersion\": \"serving.kserve.io/v1beta1\"\
+          ,\n        \"kind\": \"InferenceService\",\n        \"metadata\": {\n  \
+          \          \"name\": service_name,\n            \"namespace\": namespace\n\
+          \        },\n        \"spec\": {\n            \"predictor\": {\n       \
+          \         \"containers\": [\n                    {\n                   \
+          \     \"name\": \"kserve-container\",\n                        \"image\"\
+          : \"kind.local/movie-recommender:latest\",\n                        \"imagePullPolicy\"\
+          : \"IfNotPresent\",\n                        \"env\": [\n              \
+          \              {\n                                \"name\": \"MODEL_PATH\"\
+          ,\n                                \"value\": model.path\n             \
+          \               }\n                        ],\n                        \"\
+          resources\": {\n                            \"requests\": {\n          \
+          \                      \"memory\": \"1Gi\",\n                          \
+          \      \"cpu\": \"1000m\"\n                            },\n            \
+          \                \"limits\": {\n                                \"memory\"\
+          : \"1Gi\",\n                                \"cpu\": \"1000m\"\n       \
+          \                     }\n                        }\n                   \
+          \ }\n                ]\n            }\n        }\n    }\n\n    # Add canary\
+          \ configuration if specified\n    if canary_traffic_percent > 0:\n     \
+          \   inference_service[\"spec\"][\"canaryTrafficPercent\"] = canary_traffic_percent\n\
+          \        logger.info(f\"Canary deployment: {canary_traffic_percent}% traffic\
+          \ to canary\")\n\n    # Create or update InferenceService\n    custom_api\
+          \ = client.CustomObjectsApi()\n\n    try:\n        # Try to get existing\
+          \ service\n        existing = custom_api.get_namespaced_custom_object(\n\
+          \            group=\"serving.kserve.io\",\n            version=\"v1beta1\"\
+          ,\n            namespace=namespace,\n            plural=\"inferenceservices\"\
+          ,\n            name=service_name\n        )\n\n        # Update existing\
+          \ service\n        logger.info(f\"Updating existing InferenceService: {service_name}\"\
+          )\n        custom_api.patch_namespaced_custom_object(\n            group=\"\
+          serving.kserve.io\",\n            version=\"v1beta1\",\n            namespace=namespace,\n\
+          \            plural=\"inferenceservices\",\n            name=service_name,\n\
+          \            body=inference_service\n        )\n        status = f\"InferenceService\
+          \ '{service_name}' updated successfully\"\n\n    except client.exceptions.ApiException\
+          \ as e:\n        if e.status == 404:\n            # Create new service\n\
+          \            logger.info(f\"Creating new InferenceService: {service_name}\"\
+          )\n            custom_api.create_namespaced_custom_object(\n           \
+          \     group=\"serving.kserve.io\",\n                version=\"v1beta1\"\
+          ,\n                namespace=namespace,\n                plural=\"inferenceservices\"\
+          ,\n                body=inference_service\n            )\n            status\
+          \ = f\"InferenceService '{service_name}' created successfully\"\n      \
+          \  else:\n            raise\n\n    logger.info(status)\n    logger.info(f\"\
+          Model deployed from: {model.path}\")\n\n    return status\n\n"
+        image: python:3.11-slim
+    exec-evaluate-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas==2.0.3'\
+          \ 'numpy==1.24.3' 'scikit-learn==1.3.2'  &&  python3 -m pip install --quiet\
+          \ --no-warn-script-location 'kfp==2.14.6' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate_model(\n    test_data: Input[Dataset],\n    model: Input[Model],\n\
+          \    metrics: Output[Metrics]\n) -> str:\n    \"\"\"\n    Evaluate recommendation\
+          \ model on test data\n\n    Args:\n        test_data: Input test dataset\n\
+          \        model: Input trained model\n        metrics: Output evaluation\
+          \ metrics\n\n    Returns:\n        Evaluation status message\n    \"\"\"\
+          \n    import pandas as pd\n    import numpy as np\n    import pickle\n \
+          \   from sklearn.metrics import mean_squared_error, mean_absolute_error\n\
+          \    import logging\n\n    logging.basicConfig(level=logging.INFO)\n   \
+          \ logger = logging.getLogger(__name__)\n\n    # Load model\n    logger.info(f\"\
+          Loading model from {model.path}\")\n    with open(model.path, 'rb') as f:\n\
+          \        model_data = pickle.load(f)\n\n    user_factors = model_data['user_factors']\n\
+          \    movie_factors = model_data['movie_factors']\n    user_encoder = model_data['user_encoder']\n\
+          \    movie_encoder = model_data['movie_encoder']\n\n    # Load test data\n\
+          \    logger.info(f\"Loading test data from {test_data.path}\")\n    test_df\
+          \ = pd.read_csv(test_data.path)\n\n    logger.info(f\"Evaluating on {len(test_df)}\
+          \ ratings\")\n\n    # Make predictions on test set\n    predictions = []\n\
+          \    actuals = []\n\n    for _, row in test_df.iterrows():\n        user_id\
+          \ = row['userId']\n        movie_id = row['movieId']\n        actual_rating\
+          \ = row['rating']\n\n        # Skip if user or movie not in training set\n\
+          \        if user_id not in user_encoder or movie_id not in movie_encoder:\n\
+          \            continue\n\n        user_idx = user_encoder[user_id]\n    \
+          \    movie_idx = movie_encoder[movie_id]\n\n        # Predict rating\n \
+          \       predicted_rating = user_factors[user_idx] @ movie_factors[movie_idx]\n\
+          \        predicted_rating = np.clip(predicted_rating, 1.0, 5.0)\n\n    \
+          \    predictions.append(predicted_rating)\n        actuals.append(actual_rating)\n\
+          \n    predictions = np.array(predictions)\n    actuals = np.array(actuals)\n\
+          \n    # Calculate metrics\n    rmse = np.sqrt(mean_squared_error(actuals,\
+          \ predictions))\n    mae = mean_absolute_error(actuals, predictions)\n\n\
+          \    # Calculate coverage\n    test_users = test_df['userId'].unique()\n\
+          \    test_movies = test_df['movieId'].unique()\n    user_coverage = len(set(test_users)\
+          \ & set(user_encoder.keys())) / len(test_users)\n    movie_coverage = len(set(test_movies)\
+          \ & set(movie_encoder.keys())) / len(test_movies)\n\n    logger.info(f\"\
+          Test RMSE: {rmse:.3f}\")\n    logger.info(f\"Test MAE: {mae:.3f}\")\n  \
+          \  logger.info(f\"User coverage: {user_coverage:.2%}\")\n    logger.info(f\"\
+          Movie coverage: {movie_coverage:.2%}\")\n\n    # Log metrics to Kubeflow\n\
+          \    metrics.log_metric(\"test_rmse\", float(rmse))\n    metrics.log_metric(\"\
+          test_mae\", float(mae))\n    metrics.log_metric(\"user_coverage\", float(user_coverage))\n\
+          \    metrics.log_metric(\"movie_coverage\", float(movie_coverage))\n   \
+          \ metrics.log_metric(\"n_test_ratings\", len(test_df))\n    metrics.log_metric(\"\
+          n_evaluated_ratings\", len(predictions))\n\n    # Return evaluation status\n\
+          \    status = f\"Evaluation complete: RMSE={rmse:.3f}, MAE={mae:.3f}, Coverage={user_coverage:.2%}\"\
+          \n    logger.info(status)\n\n    return status\n\n"
+        image: python:3.11-slim
+    exec-prepare-data:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - prepare_data
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas==2.0.3'\
+          \ 'scikit-learn==1.3.2'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.14.6' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef prepare_data(\n    train_data: Output[Dataset],\n    test_data:\
+          \ Output[Dataset],\n    movies_metadata: Output[Dataset],\n    dataset_size:\
+          \ str = \"100k\",\n    test_ratio: float = 0.2,\n    random_state: int =\
+          \ 42\n):\n    \"\"\"\n    Download and prepare MovieLens dataset\n\n   \
+          \ Args:\n        train_data: Output training dataset\n        test_data:\
+          \ Output test dataset\n        dataset_size: Size of dataset to download\
+          \ (100k, 1m, etc.)\n        test_ratio: Fraction of data for test set\n\
+          \        random_state: Random seed for reproducibility\n    \"\"\"\n   \
+          \ import urllib.request\n    import zipfile\n    import pandas as pd\n \
+          \   import os\n    from sklearn.model_selection import train_test_split\n\
+          \    import logging\n\n    logging.basicConfig(level=logging.INFO)\n   \
+          \ logger = logging.getLogger(__name__)\n\n    # Download MovieLens 100K\
+          \ dataset\n    dataset_url = \"https://files.grouplens.org/datasets/movielens/ml-100k.zip\"\
+          \n    zip_path = \"/tmp/ml-100k.zip\"\n\n    logger.info(f\"Downloading\
+          \ MovieLens dataset from {dataset_url}\")\n    urllib.request.urlretrieve(dataset_url,\
+          \ zip_path)\n\n    # Extract\n    logger.info(\"Extracting dataset\")\n\
+          \    with zipfile.ZipFile(zip_path, 'r') as zip_ref:\n        zip_ref.extractall(\"\
+          /tmp\")\n\n    # Load ratings\n    logger.info(\"Loading ratings data\"\
+          )\n    ratings = pd.read_csv(\n        \"/tmp/ml-100k/u.data\",\n      \
+          \  sep='\\t',\n        names=['userId', 'movieId', 'rating', 'timestamp'],\n\
+          \        engine='python'\n    )\n\n    logger.info(f\"Loaded {len(ratings)}\
+          \ ratings\")\n    logger.info(f\"Users: {ratings['userId'].nunique()}\"\
+          )\n    logger.info(f\"Movies: {ratings['movieId'].nunique()}\")\n\n    #\
+          \ Create train/test split\n    train_df, test_df = train_test_split(\n \
+          \       ratings,\n        test_size=test_ratio,\n        random_state=random_state\n\
+          \    )\n\n    logger.info(f\"Train set: {len(train_df)} ratings\")\n   \
+          \ logger.info(f\"Test set: {len(test_df)} ratings\")\n\n    # Load movie\
+          \ metadata\n    logger.info(\"Loading movie metadata\")\n    movies = pd.read_csv(\n\
+          \        \"/tmp/ml-100k/u.item\",\n        sep='|',\n        names=['movieId',\
+          \ 'title', 'release_date', 'video_release_date', 'imdb_url',\n         \
+          \      'unknown', 'Action', 'Adventure', 'Animation', 'Children', 'Comedy',\n\
+          \               'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir',\
+          \ 'Horror',\n               'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller',\
+          \ 'War', 'Western'],\n        encoding='latin-1',\n        engine='python'\n\
+          \    )\n\n    # Extract genre columns\n    genre_columns = ['unknown', 'Action',\
+          \ 'Adventure', 'Animation', 'Children', 'Comedy',\n                    'Crime',\
+          \ 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror',\n          \
+          \          'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War',\
+          \ 'Western']\n\n    # Create genres list for each movie\n    movies['genres']\
+          \ = movies[genre_columns].apply(\n        lambda row: [genre for genre,\
+          \ val in zip(genre_columns, row) if val == 1],\n        axis=1\n    )\n\n\
+          \    # Keep only necessary columns\n    movies_df = movies[['movieId', 'title',\
+          \ 'genres']]\n\n    logger.info(f\"Loaded {len(movies_df)} movies\")\n\n\
+          \    # Save to output paths\n    train_df.to_csv(train_data.path, index=False)\n\
+          \    test_df.to_csv(test_data.path, index=False)\n    movies_df.to_csv(movies_metadata.path,\
+          \ index=False)\n\n    logger.info(f\"Data preparation complete\")\n\n"
+        image: python:3.11-slim
+    exec-train-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas==2.0.3'\
+          \ 'numpy==1.24.3' 'scikit-learn==1.3.2'  &&  python3 -m pip install --quiet\
+          \ --no-warn-script-location 'kfp==2.14.6' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_model(\n    train_data: Input[Dataset],\n    movies_metadata:\
+          \ Input[Dataset],\n    model: Output[Model],\n    metrics: Output[Metrics],\n\
+          \    n_components: int = 20,\n    random_state: int = 42\n):\n    \"\"\"\
+          \n    Train recommendation model using collaborative filtering\n\n    Args:\n\
+          \        train_data: Input training dataset\n        model: Output trained\
+          \ model\n        metrics: Output training metrics\n        n_components:\
+          \ Number of latent factors for SVD\n        random_state: Random seed\n\
+          \    \"\"\"\n    import pandas as pd\n    import numpy as np\n    import\
+          \ pickle\n    from sklearn.decomposition import TruncatedSVD\n    from sklearn.metrics\
+          \ import mean_squared_error\n    import logging\n\n    logging.basicConfig(level=logging.INFO)\n\
+          \    logger = logging.getLogger(__name__)\n\n    # Load training data\n\
+          \    logger.info(f\"Loading training data from {train_data.path}\")\n  \
+          \  ratings_df = pd.read_csv(train_data.path)\n\n    logger.info(f\"Training\
+          \ on {len(ratings_df)} ratings\")\n\n    # Load movie metadata\n    logger.info(f\"\
+          Loading movie metadata from {movies_metadata.path}\")\n    movies_df = pd.read_csv(movies_metadata.path)\n\
+          \n    # Parse genres from string representation back to list\n    import\
+          \ ast\n    movies_df['genres'] = movies_df['genres'].apply(lambda x: ast.literal_eval(x)\
+          \ if isinstance(x, str) else x)\n\n    # Create movie metadata dictionary\n\
+          \    movie_metadata = {}\n    for _, row in movies_df.iterrows():\n    \
+          \    movie_metadata[row['movieId']] = {\n            'title': row['title'],\n\
+          \            'genres': row['genres']\n        }\n\n    logger.info(f\"Loaded\
+          \ metadata for {len(movie_metadata)} movies\")\n\n    # Create encoders\n\
+          \    unique_users = ratings_df['userId'].unique()\n    unique_movies = ratings_df['movieId'].unique()\n\
+          \n    user_encoder = {user_id: idx for idx, user_id in enumerate(unique_users)}\n\
+          \    movie_encoder = {movie_id: idx for idx, movie_id in enumerate(unique_movies)}\n\
+          \n    logger.info(f\"Encoded {len(unique_users)} users and {len(unique_movies)}\
+          \ movies\")\n\n    # Create user-movie matrix\n    n_users = len(user_encoder)\n\
+          \    n_movies = len(movie_encoder)\n    user_movie_matrix = np.zeros((n_users,\
+          \ n_movies))\n\n    for _, row in ratings_df.iterrows():\n        user_idx\
+          \ = user_encoder[row['userId']]\n        movie_idx = movie_encoder[row['movieId']]\n\
+          \        user_movie_matrix[user_idx, movie_idx] = row['rating']\n\n    logger.info(f\"\
+          Created user-movie matrix: {user_movie_matrix.shape}\")\n\n    # Train SVD\
+          \ model\n    logger.info(f\"Training SVD model with {n_components} components\"\
+          )\n    svd_model = TruncatedSVD(n_components=n_components, random_state=random_state)\n\
+          \    user_factors = svd_model.fit_transform(user_movie_matrix)\n    movie_factors\
+          \ = svd_model.components_.T\n\n    # Calculate training metrics\n    predicted_ratings\
+          \ = user_factors @ movie_factors.T\n\n    # RMSE on observed ratings\n \
+          \   observed_mask = user_movie_matrix > 0\n    observed_ratings = user_movie_matrix[observed_mask]\n\
+          \    predicted_observed = predicted_ratings[observed_mask]\n\n    rmse =\
+          \ np.sqrt(mean_squared_error(observed_ratings, predicted_observed))\n  \
+          \  explained_variance = svd_model.explained_variance_ratio_.sum()\n\n  \
+          \  logger.info(f\"Training complete. RMSE: {rmse:.3f}, \"\n            \
+          \   f\"Explained Variance: {explained_variance:.3f}\")\n\n    # Log metrics\
+          \ to Kubeflow\n    metrics.log_metric(\"rmse\", float(rmse))\n    metrics.log_metric(\"\
+          explained_variance\", float(explained_variance))\n    metrics.log_metric(\"\
+          n_components\", n_components)\n    metrics.log_metric(\"n_users\", len(unique_users))\n\
+          \    metrics.log_metric(\"n_movies\", len(unique_movies))\n    metrics.log_metric(\"\
+          n_ratings\", len(ratings_df))\n\n    # Save model\n    model_data = {\n\
+          \        'user_factors': user_factors,\n        'movie_factors': movie_factors,\n\
+          \        'user_encoder': user_encoder,\n        'movie_encoder': movie_encoder,\n\
+          \        'user_decoder': {idx: user_id for user_id, idx in user_encoder.items()},\n\
+          \        'movie_decoder': {idx: movie_id for movie_id, idx in movie_encoder.items()},\n\
+          \        'user_movie_matrix': user_movie_matrix,\n        'movie_metadata':\
+          \ movie_metadata,\n        'n_components': n_components,\n        'random_state':\
+          \ random_state\n    }\n\n    with open(model.path, 'wb') as f:\n       \
+          \ pickle.dump(model_data, f)\n\n    logger.info(f\"Model saved to {model.path}\"\
+          )\n\n"
+        image: python:3.11-slim
+pipelineInfo:
+  description: End-to-end pipeline for training and deploying movie recommendation
+    model
+  name: movie-recommendation-pipeline
+root:
+  dag:
+    tasks:
+      condition-1:
+        componentRef:
+          name: comp-condition-1
+        dependentTasks:
+        - evaluate-model
+        - train-model
+        inputs:
+          artifacts:
+            pipelinechannel--train-model-model:
+              taskOutputArtifact:
+                outputArtifactKey: model
+                producerTask: train-model
+          parameters:
+            pipelinechannel--canary_traffic_percent:
+              componentInputParameter: canary_traffic_percent
+            pipelinechannel--deploy_model_flag:
+              componentInputParameter: deploy_model_flag
+        taskInfo:
+          name: condition-1
+        triggerPolicy:
+          condition: inputs.parameter_values['pipelinechannel--deploy_model_flag']
+            == true
+      evaluate-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate-model
+        dependentTasks:
+        - prepare-data
+        - train-model
+        inputs:
+          artifacts:
+            model:
+              taskOutputArtifact:
+                outputArtifactKey: model
+                producerTask: train-model
+            test_data:
+              taskOutputArtifact:
+                outputArtifactKey: test_data
+                producerTask: prepare-data
+        taskInfo:
+          name: Evaluate Model
+      prepare-data:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-prepare-data
+        inputs:
+          parameters:
+            dataset_size:
+              componentInputParameter: dataset_size
+            random_state:
+              componentInputParameter: random_state
+            test_ratio:
+              componentInputParameter: test_ratio
+        taskInfo:
+          name: Prepare MovieLens Data
+      train-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model
+        dependentTasks:
+        - prepare-data
+        inputs:
+          artifacts:
+            movies_metadata:
+              taskOutputArtifact:
+                outputArtifactKey: movies_metadata
+                producerTask: prepare-data
+            train_data:
+              taskOutputArtifact:
+                outputArtifactKey: train_data
+                producerTask: prepare-data
+          parameters:
+            n_components:
+              componentInputParameter: n_components
+            random_state:
+              componentInputParameter: random_state
+        taskInfo:
+          name: Train Recommendation Model
+  inputDefinitions:
+    parameters:
+      canary_traffic_percent:
+        defaultValue: 0.0
+        description: Percentage for canary deployment (0-100)
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      dataset_size:
+        defaultValue: 100k
+        description: Size of MovieLens dataset (100k, 1m, etc.)
+        isOptional: true
+        parameterType: STRING
+      deploy_model_flag:
+        defaultValue: true
+        description: Whether to deploy the model
+        isOptional: true
+        parameterType: BOOLEAN
+      n_components:
+        defaultValue: 20.0
+        description: Number of latent factors for SVD
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      random_state:
+        defaultValue: 42.0
+        description: Random seed for reproducibility
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      test_ratio:
+        defaultValue: 0.2
+        description: Fraction of data for testing
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.14.6

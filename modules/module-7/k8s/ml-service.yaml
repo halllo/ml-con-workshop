@@ -1,0 +1,107 @@
+# =============================================================================
+# Kubernetes Deployment: ML Service (Sentiment API)
+# =============================================================================
+
+---
+# Deployment: Manages pods running the ML service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentiment-api
+  labels:
+    app: sentiment-api
+    component: ml-service
+
+spec:
+  # Run 2 copies of the pod for high availability
+  replicas: 2
+
+  # How many old pods to keep during rollout (for quick rollback)
+  revisionHistoryLimit: 3
+
+  # Selector: Which pods this deployment manages
+  selector:
+    matchLabels:
+      app: sentiment-api
+
+  # Template: Pod specification
+  template:
+    metadata:
+      labels:
+        app: sentiment-api
+        component: ml-service
+
+    spec:
+      containers:
+      - name: sentiment-api
+        # Image will be updated by CI/CD pipeline
+        # Format: ghcr.io/{user}/{repo}/sentiment-api:main-{sha}
+        image: ghcr.io/OWNER/REPO/sentiment-api:main-latest
+
+        ports:
+        - name: http
+          containerPort: 3000
+          protocol: TCP
+
+        # Resource limits (prevents one pod from hogging all resources)
+        resources:
+          requests:
+            cpu: 200m        # 0.2 CPU cores minimum
+            memory: 512Mi    # 512 MB minimum
+          limits:
+            cpu: 1000m       # 1 CPU core maximum
+            memory: 2Gi      # 2 GB maximum
+
+        # Health check: Is the container alive?
+        # Kubernetes restarts the pod if this fails
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 3000
+          initialDelaySeconds: 30  # Wait 30s after start before checking
+          periodSeconds: 10         # Check every 10 seconds
+          timeoutSeconds: 5         # Timeout after 5 seconds
+          failureThreshold: 3       # Restart after 3 failed checks
+
+        # Readiness check: Is the container ready to serve traffic?
+        # Kubernetes won't send traffic until this passes
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+
+        # Environment variables
+        env:
+        - name: PORT
+          value: "3000"
+        - name: LOG_LEVEL
+          value: "info"
+
+---
+# Service: Exposes the deployment as a network service
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentiment-api-service
+  labels:
+    app: sentiment-api
+
+spec:
+  # Type: NodePort makes service accessible from outside the cluster
+  # For kind (local), this maps to localhost:30001
+  type: NodePort
+
+  # Selector: Which pods receive traffic from this service
+  selector:
+    app: sentiment-api
+
+  ports:
+  - name: http
+    port: 3000          # Service port (inside cluster)
+    targetPort: 3000    # Container port
+    nodePort: 30001     # External port (accessible at localhost:30001)
+    protocol: TCP

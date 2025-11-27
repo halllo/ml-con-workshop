@@ -1,0 +1,272 @@
+# Exercise 2: Prometheus Alerting Rules
+# =======================================
+#
+# Duration: 15 minutes | TODOs: 4
+#
+# What you'll learn:
+# - Alert rule structure
+# - PromQL expressions for alerts
+# - Alert severity levels
+#
+# Instructions:
+# Fill in the 4 TODOs marked with '????' or '# YOUR CODE HERE'
+# Each TODO has inline hints showing exactly what to use.
+
+---
+# ConfigMap: Alerting Rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  labels:
+    app: prometheus
+
+data:
+  alerts.yml: |
+    groups:
+    # =================================================================
+    # Gateway Alerts
+    # =================================================================
+    - name: gateway_alerts
+      interval: 30s
+      rules:
+
+      # Alert: High error rate on API Gateway
+      - alert: GatewayHighErrorRate
+        # TODO 1: Write PromQL expression for error rate > 5%
+        # HINT: Copy this expression and remove the '# ' at the beginning:
+        # rate(gateway_http_requests_total{status=~"5.."}[5m]) / rate(gateway_http_requests_total[5m]) > 0.05
+        expr: |
+          ????  # YOUR CODE HERE
+
+        # Fire alert if condition true for 2 minutes
+        for: 2m
+
+        labels:
+          severity: warning
+          component: gateway
+
+        annotations:
+          summary: "API Gateway error rate is {{ $value | humanizePercentage }}"
+          description: "Gateway has error rate above 5% (current: {{ $value | humanizePercentage }})"
+
+      - alert: GatewayHighLatency
+        expr: |
+          histogram_quantile(0.95, rate(gateway_http_request_duration_seconds_bucket[5m])) > 1
+
+        for: 5m
+
+        labels:
+          severity: warning
+          component: gateway
+
+        annotations:
+          summary: "API Gateway P95 latency is {{ $value }}s"
+          description: "Gateway latency above 1s for 5 minutes (current: {{ $value }}s)"
+
+      # Alert: Gateway is down
+      - alert: GatewayDown
+        # TODO 2: Write PromQL to detect when gateway is down
+        # HINT: Copy this expression and remove the '# ' at the beginning:
+        # absent(up{job="api-gateway"} == 1)
+        expr: |
+          ????  # YOUR CODE HERE
+
+        for: 1m
+
+        labels:
+          severity: critical
+          component: gateway
+
+        annotations:
+          summary: "API Gateway is down"
+          description: "No metrics received from API Gateway for 1 minute"
+
+    # =================================================================
+    # ML Service Alerts
+    # =================================================================
+    - name: ml_service_alerts
+      interval: 30s
+      rules:
+
+      # Alert: ML Service is down
+      - alert: MLServiceDown
+        # TODO 3: Write PromQL to detect when ML service is down
+        # HINT: Similar to TODO 2, but change "api-gateway" to "ml-service"
+        # HINT: absent(up{job="ml-service"} == 1)
+        expr: |
+          ????  # YOUR CODE HERE
+
+        for: 1m
+
+        labels:
+          severity: critical
+          component: ml-service
+
+        annotations:
+          summary: "ML Service is down"
+          description: "No metrics received from ML Service for 1 minute"
+
+      # Alert: ML inference is slow
+      - alert: MLServiceSlowInference
+        # TODO 4: Write PromQL for slow ML backend latency > 2 seconds
+        # HINT: Copy this expression and remove the '# ' at the beginning:
+        # histogram_quantile(0.95, rate(gateway_backend_request_duration_seconds_bucket[5m])) > 2
+        expr: |
+          ????  # YOUR CODE HERE
+
+        for: 5m
+
+        labels:
+          severity: warning
+          component: ml-service
+
+        annotations:
+          summary: "ML inference P95 latency is {{ $value }}s"
+          description: "ML Service latency above 2s for 5 minutes (model may need optimization)"
+
+    # =================================================================
+    # Resource Alerts
+    # =================================================================
+    - name: resource_alerts
+      interval: 30s
+      rules:
+
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            container_memory_usage_bytes{pod=~"(api-gateway|sentiment-api).*"}
+            /
+            container_spec_memory_limit_bytes{pod=~"(api-gateway|sentiment-api).*"}
+          ) > 0.9
+
+        for: 5m
+
+        labels:
+          severity: warning
+          component: infrastructure
+
+        annotations:
+          summary: "{{ $labels.pod }} memory usage is {{ $value | humanizePercentage }}"
+          description: "Pod using >90% of memory limit (risk of OOM kill)"
+
+      - alert: HighCPUUsage
+        expr: |
+          (
+            rate(container_cpu_usage_seconds_total{pod=~"(api-gateway|sentiment-api).*"}[5m])
+            /
+            container_spec_cpu_quota{pod=~"(api-gateway|sentiment-api).*"}
+            * 100000
+          ) > 90
+
+        for: 5m
+
+        labels:
+          severity: warning
+          component: infrastructure
+
+        annotations:
+          summary: "{{ $labels.pod }} CPU usage is {{ $value }}%"
+          description: "Pod using >90% of CPU limit (may be throttled)"
+
+# =============================================================================
+# KEY CONCEPTS
+# =============================================================================
+#
+# 1. ALERT RULE STRUCTURE
+#    - alert: Alert name (shown in UI)
+#    - expr: PromQL expression (when to fire)
+#    - for: How long condition must be true
+#    - labels: Metadata for routing/grouping
+#    - annotations: Human-readable descriptions
+#
+# 2. PROMQL FOR ALERTS
+#    Common patterns:
+#    - Rate: rate(metric[5m]) - Change per second over 5 minutes
+#    - Comparison: metric > threshold
+#    - Ratio: metric_a / metric_b > 0.05
+#    - Percentile: histogram_quantile(0.95, rate(metric_bucket[5m]))
+#    - Absence: absent(metric == 1)
+#
+# 3. SEVERITY LEVELS
+#    - critical: Service down, immediate action needed
+#    - warning: Degraded performance, investigate soon
+#    - info: Noteworthy event, no action needed
+#
+# 4. FOR DURATION
+#    - Prevents flapping (temporary spikes)
+#    - Balance: Too short = false alarms, Too long = delayed response
+#    - Typical values: 1m (critical), 2-5m (warning)
+#
+# 5. REGEX IN PROMQL
+#    - status=~"5.." matches 500, 501, 502, etc.
+#    - pod=~"api-gateway.*" matches all gateway pods
+#    - Use ~= for regex, = for exact match
+#
+# 6. ALERT STATES
+#    - Inactive: Condition false
+#    - Pending: Condition true, waiting for "for" duration
+#    - Firing: Condition true for "for" duration
+#
+# =============================================================================
+# COMMON ALERT PATTERNS
+# =============================================================================
+#
+# ERROR RATE:
+#   rate(errors[5m]) / rate(requests[5m]) > 0.01  # >1% errors
+#
+# LATENCY (P95):
+#   histogram_quantile(0.95, rate(duration_bucket[5m])) > 1
+#
+# SERVICE DOWN:
+#   absent(up{job="service"} == 1)
+#
+# RESOURCE USAGE:
+#   (usage / limit) > 0.9  # >90% of limit
+#
+# SATURATION:
+#   predict_linear(metric[1h], 4 * 3600) > threshold  # Predict 4h ahead
+#
+# =============================================================================
+# TESTING ALERTS
+# =============================================================================
+#
+# 1. DEPLOY ALERTS:
+#    kubectl apply -f prometheus-alerts.yaml
+#    kubectl rollout restart deployment/prometheus
+#
+# 2. VIEW IN PROMETHEUS UI:
+#    kubectl port-forward svc/prometheus 9090:9090
+#    Navigate to: Alerts
+#    See: All alert rules and their current states
+#
+# 3. TRIGGER TEST ALERT (High Error Rate):
+#    # Send 100 invalid requests
+#    for i in {1..100}; do
+#      curl -X POST http://localhost:8080/predict \
+#           -H "Content-Type: application/json" \
+#           -d 'invalid' &
+#    done
+#
+#    # Wait 2 minutes, check Alerts page
+#    # GatewayHighErrorRate should go: Inactive → Pending → Firing
+#
+# 4. TEST QUERIES DIRECTLY:
+#    # In Prometheus UI, test the expr directly:
+#    rate(gateway_http_requests_total{status=~"5.."}[5m])
+#    / rate(gateway_http_requests_total[5m])
+#
+# =============================================================================
+# VALIDATION
+# =============================================================================
+#
+# Run validation tests:
+#   ./tests/test_alerts.sh
+#
+# Manual verification:
+#   1. kubectl logs -l app=prometheus | grep "Loading configuration"
+#   2. Check for "Completed loading of configuration file"
+#   3. Open Prometheus UI → Alerts
+#   4. Verify 8 alerts are loaded
+#
+# =============================================================================

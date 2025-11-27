@@ -1,0 +1,33 @@
+{
+  "name": "MLOps Workshop",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11-bullseye",
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.21"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+      "version": "latest",
+      "helm": "latest",
+      "minikube": "none"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "golang.go",
+        "ms-kubernetes-tools.vscode-kubernetes-tools"
+      ]
+    }
+  },
+  "forwardPorts": [5000, 3000, 8080, 9090, 3001],
+  "portsAttributes": {
+    "5000": {"label": "MLflow UI"},
+    "3000": {"label": "BentoML"},
+    "8080": {"label": "Kubeflow"},
+    "9090": {"label": "Prometheus"},
+    "3001": {"label": "Grafana"}
+  }
+}

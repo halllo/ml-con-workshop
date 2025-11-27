@@ -1,0 +1,20 @@
+# Build tools (MUST install first for Python 3.13+)
+setuptools>=65.0.0
+wheel
+
+# Kubeflow Pipelines SDK (v2 API)
+kfp==2.14.3
+
+# Data processing (compatible with Python 3.13)
+pandas>=2.0.3
+numpy>=1.24.3
+
+# Machine learning
+scikit-learn>=1.3.2
+
+# Testing
+pytest>=7.4.3
+pytest-cov>=4.1.0
+
+# Optional: For local KServe deployment (advanced)
+# kubernetes==28.1.0

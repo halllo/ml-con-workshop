@@ -1,0 +1,352 @@
+# Grafana Deployment for MLOps Dashboards
+# =========================================
+#
+# This manifest deploys Grafana with:
+# - Pre-configured Prometheus datasource
+# - Pre-loaded dashboards for ML monitoring
+# - Anonymous access enabled (for workshop simplicity)
+#
+# In production, configure proper authentication!
+
+---
+# ConfigMap: Grafana Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+  labels:
+    app: grafana
+
+data:
+  grafana.ini: |
+    [server]
+    root_url = http://localhost:3000
+
+    [analytics]
+    check_for_updates = false
+    reporting_enabled = false
+
+    [auth.anonymous]
+    enabled = true
+    org_role = Viewer
+
+    [security]
+    admin_user = admin
+    admin_password = admin
+    # In production, use strong password and disable anonymous access!
+
+---
+# ConfigMap: Datasources
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  labels:
+    app: grafana
+
+data:
+  prometheus.yaml: |
+    apiVersion: 1
+
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      access: proxy
+      url: http://prometheus:9090
+      isDefault: true
+      editable: false
+      jsonData:
+        timeInterval: 15s
+
+---
+# ConfigMap: Dashboard Providers
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-providers
+  labels:
+    app: grafana
+
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+
+    providers:
+    - name: 'MLOps Dashboards'
+      orgId: 1
+      folder: 'MLOps Workshop'
+      type: file
+      disableDeletion: false
+      editable: true
+      options:
+        path: /var/lib/grafana/dashboards
+
+---
+# ConfigMap: MLOps Overview Dashboard
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-mlops
+  labels:
+    app: grafana
+
+data:
+  mlops-overview.json: |
+    {
+      "uid": "mlops-overview",
+      "title": "MLOps Overview",
+      "tags": ["mlops", "workshop"],
+      "timezone": "browser",
+      "schemaVersion": 16,
+      "version": 1,
+      "refresh": "10s",
+
+      "panels": [
+          {
+            "id": 1,
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+            "type": "graph",
+            "title": "Request Rate (req/sec)",
+            "targets": [
+              {
+                "expr": "rate(gateway_http_requests_total[5m])",
+                "legendFormat": "{{method}} {{endpoint}} - {{status}}"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+            "type": "graph",
+            "title": "Error Rate",
+            "targets": [
+              {
+                "expr": "rate(gateway_http_requests_total{status=~\"5..\"}[5m])",
+                "legendFormat": "5xx Errors"
+              },
+              {
+                "expr": "rate(gateway_http_requests_total{status=~\"4..\"}[5m])",
+                "legendFormat": "4xx Errors"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+            "type": "graph",
+            "title": "Gateway Latency (P95, P99)",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(gateway_http_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "P95"
+              },
+              {
+                "expr": "histogram_quantile(0.99, rate(gateway_http_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "P99"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+            "type": "graph",
+            "title": "ML Inference Latency (P95, P99)",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(gateway_backend_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "P95"
+              },
+              {
+                "expr": "histogram_quantile(0.99, rate(gateway_backend_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "P99"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+            "type": "graph",
+            "title": "Pod Memory Usage",
+            "targets": [
+              {
+                "expr": "container_memory_usage_bytes{pod=~\"api-gateway.*\"}",
+                "legendFormat": "Gateway - {{pod}}"
+              },
+              {
+                "expr": "container_memory_usage_bytes{pod=~\"sentiment-api.*\"}",
+                "legendFormat": "ML Service - {{pod}}"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+            "type": "graph",
+            "title": "Pod CPU Usage",
+            "targets": [
+              {
+                "expr": "rate(container_cpu_usage_seconds_total{pod=~\"api-gateway.*\"}[5m])",
+                "legendFormat": "Gateway - {{pod}}"
+              },
+              {
+                "expr": "rate(container_cpu_usage_seconds_total{pod=~\"sentiment-api.*\"}[5m])",
+                "legendFormat": "ML Service - {{pod}}"
+              }
+            ]
+          }
+      ]
+    }
+
+---
+# Grafana Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  labels:
+    app: grafana
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: grafana
+
+  template:
+    metadata:
+      labels:
+        app: grafana
+
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.2.2
+
+        ports:
+        - name: web
+          containerPort: 3000
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+        volumeMounts:
+        - name: config
+          mountPath: /etc/grafana
+        - name: datasources
+          mountPath: /etc/grafana/provisioning/datasources
+        - name: dashboard-providers
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: dashboards
+          mountPath: /var/lib/grafana/dashboards
+        - name: storage
+          mountPath: /var/lib/grafana
+
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+      volumes:
+      - name: config
+        configMap:
+          name: grafana-config
+
+      - name: datasources
+        configMap:
+          name: grafana-datasources
+
+      - name: dashboard-providers
+        configMap:
+          name: grafana-dashboard-providers
+
+      - name: dashboards
+        configMap:
+          name: grafana-dashboard-mlops
+
+      - name: storage
+        emptyDir: {}
+
+---
+# Grafana Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  labels:
+    app: grafana
+
+spec:
+  type: NodePort
+
+  selector:
+    app: grafana
+
+  ports:
+  - name: web
+    port: 3000
+    targetPort: 3000
+    nodePort: 30300
+
+# =============================================================================
+# DEPLOYMENT INSTRUCTIONS
+# =============================================================================
+#
+# 1. Deploy Grafana:
+#    kubectl apply -f grafana-deployment.yaml
+#
+# 2. Wait for pod to be ready:
+#    kubectl wait --for=condition=ready pod -l app=grafana --timeout=120s
+#
+# 3. Access Grafana UI:
+#    # Option A: Port forward
+#    kubectl port-forward svc/grafana 3000:3000
+#    # Then visit: http://localhost:3000
+#
+#    # Option B: NodePort (kind)
+#    # Visit: http://localhost:30300
+#
+# 4. Login (for admin access):
+#    Username: admin
+#    Password: admin
+#
+#    Note: Anonymous viewing is enabled, so you can also just visit the URL.
+#
+# 5. View dashboards:
+#    Navigate to: Dashboards → MLOps Workshop → MLOps Overview
+#
+# 6. Explore metrics:
+#    - Request rate and error rate
+#    - Gateway and ML inference latency
+#    - Pod resource usage (CPU, memory)
+#
+# =============================================================================
+# CUSTOMIZING DASHBOARDS
+# =============================================================================
+#
+# The dashboard is provisioned from ConfigMap, so changes in UI are temporary.
+#
+# To persist changes:
+# 1. Make changes in Grafana UI
+# 2. Export dashboard JSON: Share → Export → View JSON
+# 3. Update the ConfigMap with new JSON
+# 4. Restart Grafana: kubectl rollout restart deployment/grafana
+#
+# Or edit directly:
+#    kubectl edit configmap grafana-dashboard-mlops
+#
+# =============================================================================

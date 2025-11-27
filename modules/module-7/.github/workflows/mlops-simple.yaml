@@ -1,0 +1,259 @@
+# =============================================================================
+# Simple MLOps CI/CD Workflow
+# =============================================================================
+#
+# This workflow demonstrates a basic CI/CD pipeline for ML services:
+# 1. Build Docker images for ML service and API gateway
+# 2. Push images to GitHub Container Registry
+# 3. Output deployment instructions
+
+name: Simple MLOps CI/CD
+
+# Trigger: Run workflow when code is pushed to main branch
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'modules/module-2/**'   # ML service code
+      - 'modules/module-4/**'   # API Gateway code
+      - 'modules/module-7/**'   # CI/CD configs
+
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+
+# Environment variables available to all jobs
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+# Jobs run in sequence: build ML service → build gateway → show deployment steps
+jobs:
+
+  # ===========================================================================
+  # Job 1: Build ML Service (Python/BentoML)
+  # ===========================================================================
+  build-ml-service:
+    name: Build ML Service
+    runs-on: ubuntu-latest
+
+    # Permissions needed to push to GitHub Container Registry
+    permissions:
+      contents: read      # Read repository code
+      packages: write     # Push Docker images
+
+    steps:
+      # Step 1: Get the code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Python (needed for BentoML)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Step 3: Install BentoML
+      - name: Install BentoML
+        run: |
+          pip install --quiet bentoml
+
+      # Step 4: Set up Docker Buildx (for efficient image builds)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 5: Log in to GitHub Container Registry
+      # Uses GITHUB_TOKEN (automatically provided by GitHub Actions)
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 6: Generate image tag with short commit SHA
+      # Format: main-a1b2c3d (branch-sha)
+      - name: Generate image tag
+        id: meta
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          BRANCH_NAME=${{ github.ref_name }}
+          TAG="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/sentiment-api:${BRANCH_NAME}-${SHORT_SHA}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      # Step 7: Build Bento (BentoML package)
+      - name: Build Bento
+        working-directory: ./modules/module-2/solution
+        run: |
+          bentoml build
+
+      # Step 8: Get the latest Bento tag
+      - name: Get Bento tag
+        id: bento
+        run: |
+          BENTO_TAG=$(bentoml list sentiment_service -o json | jq -r '.[0].tag')
+          echo "tag=${BENTO_TAG}" >> $GITHUB_OUTPUT
+
+      # Step 9: Containerize Bento and push to registry
+      - name: Build and push ML Service image
+        run: |
+          bentoml containerize ${{ steps.bento.outputs.tag }} \
+            -t ${{ steps.meta.outputs.tag }} \
+            --push
+
+      # Step 10: Output build summary
+      - name: Output build summary
+        run: |
+          echo "### ML Service Image Built ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ steps.meta.outputs.short_sha }}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # Job 2: Build API Gateway (Go)
+  # ===========================================================================
+  build-api-gateway:
+    name: Build API Gateway
+    runs-on: ubuntu-latest
+
+    # Permissions needed to push to GitHub Container Registry
+    permissions:
+      contents: read      # Read repository code
+      packages: write     # Push Docker images
+
+    steps:
+      # Step 1: Get the code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 3: Log in to GitHub Container Registry
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 4: Generate image tag with short commit SHA
+      - name: Generate image tag
+        id: meta
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          BRANCH_NAME=${{ github.ref_name }}
+          TAG="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api-gateway:${BRANCH_NAME}-${SHORT_SHA}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      # Step 5: Build and push Docker image
+      - name: Build and push API Gateway image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./modules/module-4
+          file: ./modules/module-4/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Step 6: Output build summary
+      - name: Output build summary
+        run: |
+          echo "### API Gateway Image Built ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ steps.meta.outputs.short_sha }}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # Job 3: Deployment Instructions
+  # ===========================================================================
+  deployment-instructions:
+    name: Deployment Instructions
+    runs-on: ubuntu-latest
+    needs: [build-ml-service, build-api-gateway]  # Wait for builds to complete
+
+    steps:
+      # Step 1: Generate deployment commands
+      - name: Generate deployment instructions
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          BRANCH_NAME=${{ github.ref_name }}
+          ML_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/sentiment-api:${BRANCH_NAME}-${SHORT_SHA}"
+          GW_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api-gateway:${BRANCH_NAME}-${SHORT_SHA}"
+
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🎉 Build Complete!
+
+          Docker images have been built and pushed to GitHub Container Registry.
+
+          ### Images Built:
+          - **ML Service:** \`${ML_IMAGE}\`
+          - **API Gateway:** \`${GW_IMAGE}\`
+
+          ---
+
+          ## 🚀 Deploy to Your Local kind Cluster
+
+          Follow these steps to deploy the services:
+
+          ### 1. Pull images from registry
+          \`\`\`bash
+          docker pull ${ML_IMAGE}
+          docker pull ${GW_IMAGE}
+          \`\`\`
+
+          ### 2. Load images into kind cluster
+          \`\`\`bash
+          kind load docker-image ${ML_IMAGE} --name mlops-workshop
+          kind load docker-image ${GW_IMAGE} --name mlops-workshop
+          \`\`\`
+
+          ### 3. Update Kubernetes manifests with new image tags
+          \`\`\`bash
+          cd modules/module-7/k8s
+
+          # Update ML service image
+          sed -i.bak "s|image:.*sentiment-api.*|image: ${ML_IMAGE}|" ml-service.yaml
+
+          # Update API gateway image
+          sed -i.bak "s|image:.*api-gateway.*|image: ${GW_IMAGE}|" api-gateway.yaml
+          \`\`\`
+
+          ### 4. Deploy to Kubernetes
+          \`\`\`bash
+          kubectl apply -f modules/module-7/k8s/
+
+          # Wait for rollout to complete
+          kubectl rollout status deployment/sentiment-api --timeout=5m
+          kubectl rollout status deployment/api-gateway --timeout=5m
+          \`\`\`
+
+          ### 5. Verify deployment
+          \`\`\`bash
+          # Check pods are running
+          kubectl get pods -l app=sentiment-api
+          kubectl get pods -l app=api-gateway
+
+          # Test the API gateway health endpoint
+          curl http://localhost:30080/health
+
+          # Test sentiment analysis
+          curl -X POST http://localhost:30080/predict \\
+            -H "Content-Type: application/json" \\
+            -d '{"request": {"text": "This workshop is amazing!"}}'
+          \`\`\`
+
+          ---
+
+          ## 📝 Notes
+
+          - **Image tags** use the format \`{branch}-{short-sha}\` for traceability
+          - **kind cluster** must be named \`mlops-workshop\` (or adjust the commands above)
+          - **Manual deployment** is used because GitHub Actions runners cannot access local clusters
+          - See \`modules/module-7/README.md\` for more details
+
+          EOF

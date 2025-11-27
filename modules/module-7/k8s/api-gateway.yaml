@@ -1,0 +1,109 @@
+# =============================================================================
+# Kubernetes Deployment: API Gateway (Go)
+# =============================================================================
+
+---
+# Deployment: Manages pods running the API gateway
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+    component: gateway
+
+spec:
+  # Run 2 copies of the pod for high availability
+  replicas: 2
+
+  # How many old pods to keep during rollout (for quick rollback)
+  revisionHistoryLimit: 3
+
+  # Selector: Which pods this deployment manages
+  selector:
+    matchLabels:
+      app: api-gateway
+
+  # Template: Pod specification
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        component: gateway
+
+    spec:
+      containers:
+      - name: api-gateway
+        # Image will be updated by CI/CD pipeline
+        # Format: ghcr.io/{user}/{repo}/api-gateway:main-{sha}
+        image: ghcr.io/OWNER/REPO/api-gateway:main-latest
+
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+
+        # Resource limits (gateway is lightweight, needs less than ML service)
+        resources:
+          requests:
+            cpu: 100m        # 0.1 CPU cores minimum
+            memory: 128Mi    # 128 MB minimum
+          limits:
+            cpu: 500m        # 0.5 CPU cores maximum
+            memory: 256Mi    # 256 MB maximum
+
+        # Health check: Is the container alive?
+        # Kubernetes restarts the pod if this fails
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+        # Readiness check: Is the container ready to serve traffic?
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 2
+
+        # Environment variables
+        env:
+        # Backend ML service URL (uses Kubernetes DNS)
+        - name: BACKEND_URL
+          value: "http://sentiment-api-service:3000"
+        - name: PORT
+          value: "8080"
+        - name: LOG_LEVEL
+          value: "info"
+
+---
+# Service: Exposes the deployment as a network service
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-service
+  labels:
+    app: api-gateway
+
+spec:
+  # Type: NodePort makes service accessible from outside the cluster
+  # For kind (local), this maps to localhost:30080
+  type: NodePort
+
+  # Selector: Which pods receive traffic from this service
+  selector:
+    app: api-gateway
+
+  ports:
+  - name: http
+    port: 80            # Service port (inside cluster)
+    targetPort: 8080    # Container port
+    nodePort: 30080     # External port (accessible at localhost:30080)
+    protocol: TCP
