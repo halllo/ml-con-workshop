@@ -1,0 +1,20 @@
+# Solving the ML Production Puzzle: A Practical Guide to Modern MLOps
+
+A hands-on workshop covering the complete journey from ML model development to production deployment using industry-standard tools.
+
+## Overview
+
+This 6-hour intensive workshop teaches you to deploy and maintain machine learning models in production. Through progressive hands-on modules, you'll work with Kubernetes, MLflow, BentoML, and Kubeflow to build production-ready ML systems.
+
+**What You'll Learn:**
+- Model versioning with Hugging Face Hub and MLflow
+- Containerization with Docker and BentoML
+- Kubernetes deployment and scaling
+- Production monitoring and observability
+- CI/CD pipelines for ML models
+
+**Setup Options:**
+- Local (macOS): Python 3.11+, Docker Desktop, kubectl, kind
+- GitHub Codespaces: Pre-configured cloud environment
+
+Get started with Module 1 to begin your MLOps journey!
