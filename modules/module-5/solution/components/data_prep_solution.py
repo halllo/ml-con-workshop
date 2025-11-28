@@ -43,6 +43,9 @@ def prepare_data(
     zip_path = "/tmp/ml-100k.zip"
 
     logger.info(f"Downloading MovieLens dataset from {dataset_url}")
+    # Set a longer timeout (e.g., 600 seconds = 10 minutes)
+    import socket
+    socket.setdefaulttimeout(600)
     urllib.request.urlretrieve(dataset_url, zip_path)
 
     # Extract
