@@ -9,13 +9,17 @@ from transformers import pipeline
 
 # TODO 1: Import Pydantic for validation
 # FILL IN: from pydantic import BaseModel, Field, field_validator
-# YOUR CODE HERE
+from pydantic import BaseModel, Field, field_validator
 
 # TODO 2: Import typing, time, logging, uuid, datetime for production features
 # FILL IN: from typing import List, Optional
 # FILL IN: import time, logging, uuid
 # FILL IN: from datetime import datetime
-# YOUR CODE HERE
+from typing import List, Optional
+import time
+import logging
+import uuid
+from datetime import datetime
 
 print("=" * 70)
 print("EXERCISE 2: Input Validation & Production Features")
@@ -41,7 +45,13 @@ class SentimentRequest(BaseModel):
     # YOUR CODE HERE
     # text: str = Field(...)
     # request_id: Optional[str] = Field(None, description="Optional request ID")
-    pass  # Remove this line after adding your code
+    text: str = Field(
+        ...,
+        min_length=1,
+        max_length=5000,
+        description="Text to analyze for sentiment"
+    )
+    request_id: Optional[str] = Field(None, description="Optional request ID for tracking")
 
 
 # TODO 4: Add custom validator for text field (Pydantic v2 style)
@@ -54,6 +64,12 @@ class SentimentRequest(BaseModel):
     #     if not v or v.strip() == "":
     #         raise ValueError('Text cannot be empty or just whitespace')
     #     return v.strip()
+    @field_validator('text')
+    @classmethod
+    def text_must_not_be_empty_or_whitespace(cls, v: str) -> str:
+        if not v or v.strip() == "":
+            raise ValueError('Text cannot be empty or just whitespace')
+        return v.strip()
 
 
 # TODO 5: Define the SentimentResponse model
@@ -75,7 +91,11 @@ class SentimentResponse(BaseModel):
     # confidence: float = Field(..., ge=0.0, le=1.0)
     # request_id: str
     # timestamp: str
-    pass  # Remove this line after adding your code
+    text: str
+    sentiment: str
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    request_id: str
+    timestamp: str
 
 
 # TODO 6: Define BatchSentimentRequest model
@@ -87,7 +107,16 @@ class BatchSentimentRequest(BaseModel):
     # YOUR CODE HERE
     # texts: List[str] = Field(...)
     # request_id: Optional[str] = None
-    pass  # Remove this line after adding your code
+    texts: List[str] = Field(..., min_length=1, max_length=100)
+    request_id: Optional[str] = None
+
+    @field_validator('texts')
+    @classmethod
+    def validate_each_text(cls, v: List[str]) -> List[str]:
+        for text in v:
+            if not text or text.strip() == "":
+                raise ValueError('All texts must be non-empty')
+        return [text.strip() for text in v]
 
 
 # TODO 7: Define BatchSentimentResponse model
@@ -101,7 +130,9 @@ class BatchSentimentResponse(BaseModel):
     # results: List[SentimentResponse]
     # metadata: dict
     # request_id: str
-    pass  # Remove this line after adding your code
+    results: List[SentimentResponse]
+    metadata: dict
+    request_id: str
 
 
 # TODO 8: Define ErrorResponse model
@@ -113,7 +144,10 @@ class ErrorResponse(BaseModel):
     # message: str = Field(...)
     # request_id: str = Field(...)
     # timestamp: str = Field(...)
-    pass  # Remove this line after adding your code
+    error: str = Field(...)
+    message: str = Field(...)
+    request_id: str = Field(...)
+    timestamp: str = Field(...)
 
 
 print("  ✓ Pydantic models defined (fill in TODOs 3-8)")
@@ -131,11 +165,15 @@ print("\n[2/6] Configuring logging...")
 #   - format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 #   - datefmt='%Y-%m-%d %H:%M:%S'
 # YOUR CODE HERE
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 # TODO 10: Create logger instance
 # FILL IN: logger = logging.getLogger(__name__)
-logger = None  # YOUR CODE HERE
-
+logger = logging.getLogger(__name__)
 print("  ✓ Logging configured (fill in TODOs 9-10)")
 
 # =============================================================================
@@ -151,7 +189,10 @@ def generate_request_id(provided_id: Optional[str] = None) -> str:
     # YOUR CODE HERE
     # Hint: if provided_id: return provided_id
     #       else: return str(uuid.uuid4())[:8]
-    pass
+    if provided_id:
+        return provided_id
+    else:
+        return str(uuid.uuid4())[:8]
 
 
 # TODO 12: Implement get_timestamp function
@@ -159,7 +200,7 @@ def generate_request_id(provided_id: Optional[str] = None) -> str:
 def get_timestamp() -> str:
     """Get ISO formatted timestamp"""
     # YOUR CODE HERE
-    pass
+    return datetime.utcnow().isoformat()
 
 
 print("  ✓ Helper functions defined (fill in TODOs 11-12)")
@@ -173,6 +214,7 @@ print("\n[4/6] Creating production service...")
 # TODO 13: Add @bentoml.service decorator
 # FILL IN: @bentoml.service(resources={"cpu": "2"}, traffic={"timeout": 30})
 # YOUR DECORATOR HERE
+@bentoml.service(resources={"cpu": "2"}, traffic={"timeout": 30})
 class SentimentService:
     """
     Production-ready sentiment analysis service
@@ -189,15 +231,20 @@ class SentimentService:
         """Initialize the sentiment analysis pipeline"""
         # TODO 14: Load the pipeline
         # FILL IN: self.pipeline = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-        self.pipeline = None  # YOUR CODE HERE
+        self.pipeline = pipeline(
+            "sentiment-analysis",
+            model="distilbert-base-uncased-finetuned-sst-2-english"
+        )
 
         # TODO 15: Log that model is ready
         # FILL IN: logger.info("Model loaded and ready")
         # YOUR CODE HERE
+        logger.info("Model loaded and ready")
 
     # TODO 16: Add @bentoml.api decorator for predict endpoint
     # FILL IN: @bentoml.api
     # YOUR DECORATOR HERE
+    @bentoml.api
     def predict(self, request: SentimentRequest) -> SentimentResponse:
         """
         Predict sentiment with validation and error handling
@@ -214,6 +261,10 @@ class SentimentService:
         # TODO 17: Log incoming request
         # FILL IN: logger.info(f"[{request_id}] Single prediction request")
         # YOUR CODE HERE
+        logger.info(
+            f"[{request_id}] Single prediction request",
+            extra={"text_length": len(request.text)}
+        )
 
         # TODO 18: Add try/except block around prediction
         # FILL IN: Wrap the prediction logic in try/except Exception as e
@@ -223,7 +274,7 @@ class SentimentService:
 
             # TODO 19: Run prediction
             # FILL IN: result = self.pipeline(request.text)
-            result = None  # YOUR CODE HERE
+            result = self.pipeline(request.text)
 
             # Calculate latency
             latency = (time.time() - start_time) * 1000
@@ -231,26 +282,47 @@ class SentimentService:
             # TODO 20: Log successful prediction
             # FILL IN: logger.info(f"[{request_id}] Prediction successful", extra={"latency_ms": round(latency, 2)})
             # YOUR CODE HERE
+            logger.info(
+                f"[{request_id}] Prediction successful",
+                extra={"latency_ms": round(latency, 2)}
+            )
 
             # TODO 21: Return SentimentResponse
             # FILL IN: Create and return SentimentResponse with all required fields
             # Hint: text=request.text, sentiment=result[0]['label'],
             #       confidence=round(result[0]['score'], 4), request_id=request_id, timestamp=get_timestamp()
-            return None  # YOUR CODE HERE
+            return SentimentResponse(
+                text=request.text,
+                sentiment=result[0]['label'],
+                confidence=round(result[0]['score'], 4),
+                request_id=request_id,
+                timestamp=get_timestamp()
+            )
 
         except Exception as e:
             # TODO 22: Log error with stack trace
             # FILL IN: logger.error(f"[{request_id}] Prediction failed: {str(e)}", exc_info=True)
             # YOUR CODE HERE
+            logger.error(
+                f"[{request_id}] Prediction failed: {str(e)}",
+                exc_info=True
+            )
 
             # TODO 23: Return error response (as SentimentResponse with ERROR sentiment)
             # FILL IN: Return SentimentResponse with sentiment="ERROR", confidence=0.0
             # Hint: SentimentResponse(text=request.text, sentiment="ERROR", confidence=0.0, request_id=request_id, timestamp=get_timestamp())
-            return None  # YOUR CODE HERE
+            return SentimentResponse(
+                text=request.text,
+                sentiment="ERROR",
+                confidence=0.0,
+                request_id=request_id,
+                timestamp=get_timestamp()
+            )
 
     # TODO 24: Add @bentoml.api decorator for batch_predict endpoint
     # FILL IN: @bentoml.api
     # YOUR DECORATOR HERE
+    @bentoml.api
     def batch_predict(self, request: BatchSentimentRequest) -> BatchSentimentResponse:
         """
         Batch predict with error handling
@@ -334,12 +406,12 @@ class SentimentService:
     # TODO 25: Add @bentoml.api decorator and implement health check
     # FILL IN: Add @bentoml.api decorator
     # FILL IN: Return dict with status, service, and timestamp
-    # YOUR DECORATOR HERE
+    @bentoml.api
     def health(self) -> dict:
         """Production health check with timestamp"""
         # YOUR CODE HERE
         # Hint: return {"status": "healthy", "service": "sentiment_analysis", "timestamp": get_timestamp()}
-        pass
+        return {"status": "healthy", "service": "sentiment_analysis", "timestamp": get_timestamp()}
 
 
 print("  ✓ Production service defined (fill in TODOs 13-25)")

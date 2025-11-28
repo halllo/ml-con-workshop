@@ -20,6 +20,10 @@ print("\n[1/3] Defining BentoML service class...")
 # TODO 1: Add @bentoml.service decorator to the class
 # FILL IN: Use @bentoml.service(resources={"cpu": "2"}, traffic={"timeout": 30})
 # Hint: The decorator configures resource requirements and traffic settings
+@bentoml.service(
+    resources={"cpu": "2"},      # Resource requirements
+    traffic={"timeout": 30},     # Request timeout in seconds
+)
 
 # YOUR DECORATOR HERE
 class SentimentService:
@@ -44,7 +48,10 @@ class SentimentService:
         print("\n  Loading sentiment analysis model...")
 
         # YOUR CODE HERE
-        self.pipeline = None  # REPLACE THIS
+        self.pipeline = pipeline(
+            "sentiment-analysis",
+            model="distilbert-base-uncased-finetuned-sst-2-english"
+        )
 
         print("  ✓ Model loaded and ready")
 
@@ -53,6 +60,7 @@ class SentimentService:
     # Hint: This makes the method an HTTP endpoint
 
     # YOUR DECORATOR HERE
+    @bentoml.api
     def predict(self, text: str) -> dict:
         """
         Predict sentiment of input text
@@ -70,12 +78,12 @@ class SentimentService:
         # Hint: text = input_data["text"], then result = self.pipeline(text)
 
         # YOUR CODE HERE
-        result = None  # REPLACE THIS
+        result = self.pipeline(text)
 
         # TODO 6: Return the first result
         # FILL IN: The pipeline returns a list, extract the first element
         # Hint: Use result[0]
-        return None  # YOUR CODE HERE
+        return result[0]  # YOUR CODE HERE
 
 
 print("  ✓ Service class structure defined (fill in TODOs 1-6)")

@@ -46,7 +46,8 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 # TODO 1: Import MLflow and MLflow's transformers integration
 # Hint: import mlflow
 # Hint: import mlflow.transformers
-# TODO: Add imports here
+import mlflow
+import mlflow.transformers
 
 # For Part 2 (Advanced)
 from mlflow.tracking import MlflowClient
@@ -154,15 +155,18 @@ def train_model_with_mlflow(
 
     # TODO 2: Log the model architecture parameter
     # Hint: mlflow.log_param("model_name", model_name)
-    # TODO: Add parameter logging here
+    mlflow.log_param("model_name", model_name)
 
     # TODO 3: Log training hyperparameters
     # Hint: Log epochs, batch_size, and learning_rate
-    # TODO: Add hyperparameter logging here
-
+    mlflow.log_param("epochs", epochs)
+    mlflow.log_param("batch_size", batch_size)
+    mlflow.log_param("learning_rate", learning_rate)
+    
     # TODO 4: Log dataset sizes
     # Hint: Log train_samples and test_samples using len(train_dataset)
-    # TODO: Add dataset size logging here
+    mlflow.log_param("train_samples", len(train_dataset))
+    mlflow.log_param("test_samples", len(test_dataset))
 
     # Configure training
     training_args = TrainingArguments(
@@ -197,7 +201,7 @@ def train_model_with_mlflow(
 
     # TODO 5: Log training loss to MLflow
     # Hint: mlflow.log_metric("train_loss", train_result.training_loss)
-    # TODO: Add training loss logging here
+    mlflow.log_metric("train_loss", train_result.training_loss)
 
     return trainer, train_result
 
@@ -214,8 +218,12 @@ def evaluate_and_log_metrics(trainer):
 
     # TODO 6: Log evaluation metrics to MLflow
     # Hint: Log eval_loss, accuracy, precision, and f1_score
-    # Hint: Access metrics like eval_results["eval_loss"], eval_results["eval_accuracy"]
-    # TODO: Add metric logging here
+    # Hint: Access metrics like eval_results["eval_loss"], eval_results["eval_accuracy"]    
+    mlflow.log_metric("eval_loss", eval_results["eval_loss"])
+    mlflow.log_metric("eval_accuracy", eval_results["eval_accuracy"])
+    mlflow.log_metric("eval_precision", eval_results["eval_precision"])
+    mlflow.log_metric("eval_f1", eval_results["eval_f1"])
+    mlflow.log_metric("eval_recall", eval_results["eval_recall"])
 
     print(f"✓ Metrics logged to MLflow:")
     print(f"  - Accuracy:  {eval_results['eval_accuracy']:.4f}")
@@ -237,7 +245,11 @@ def log_model_to_mlflow(model, tokenizer):
     # Hint: Use mlflow.transformers.log_model()
     # Hint: Pass transformers_model={"model": model, "tokenizer": tokenizer}
     # Hint: Set artifact_path="model" and task="text-classification"
-    # TODO: Add model logging here
+    mlflow.transformers.log_model(
+        transformers_model={"model": model, "tokenizer": tokenizer},
+        artifact_path="model",
+        task="text-classification"
+    )
 
     print(f"✓ Model logged to MLflow")
     print(f"  💡 View in MLflow UI: http://localhost:5000")
@@ -468,7 +480,7 @@ def main_basic_training():
 
     # TODO 8: Set up MLflow experiment
     # Hint: mlflow.set_experiment(EXPERIMENT_NAME)
-    # TODO: Add experiment setup here
+    mlflow.set_experiment(EXPERIMENT_NAME)
 
     print(f"\n✓ MLflow experiment: {EXPERIMENT_NAME}")
     print(f"  💡 Start MLflow UI: mlflow ui")

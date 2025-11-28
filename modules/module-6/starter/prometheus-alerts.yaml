@@ -37,7 +37,10 @@ data:
         # HINT: Copy this expression and remove the '# ' at the beginning:
         # rate(gateway_http_requests_total{status=~"5.."}[5m]) / rate(gateway_http_requests_total[5m]) > 0.05
         expr: |
-          ????  # YOUR CODE HERE
+          rate(gateway_http_requests_total{status=~"5.."}[5m])
+          /
+          rate(gateway_http_requests_total[5m])
+          > 0.05
 
         # Fire alert if condition true for 2 minutes
         for: 2m
@@ -69,8 +72,7 @@ data:
         # TODO 2: Write PromQL to detect when gateway is down
         # HINT: Copy this expression and remove the '# ' at the beginning:
         # absent(up{job="api-gateway"} == 1)
-        expr: |
-          ????  # YOUR CODE HERE
+        expr: up{job="api-gateway"} == 0
 
         for: 1m
 
@@ -94,8 +96,7 @@ data:
         # TODO 3: Write PromQL to detect when ML service is down
         # HINT: Similar to TODO 2, but change "api-gateway" to "ml-service"
         # HINT: absent(up{job="ml-service"} == 1)
-        expr: |
-          ????  # YOUR CODE HERE
+        expr: up{job="ml-service"} == 0
 
         for: 1m
 
@@ -113,7 +114,9 @@ data:
         # HINT: Copy this expression and remove the '# ' at the beginning:
         # histogram_quantile(0.95, rate(gateway_backend_request_duration_seconds_bucket[5m])) > 2
         expr: |
-          ????  # YOUR CODE HERE
+          histogram_quantile(0.95,
+            rate(gateway_backend_request_duration_seconds_bucket[5m])
+          ) > 2.0
 
         for: 5m
 

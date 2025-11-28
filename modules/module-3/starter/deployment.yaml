@@ -33,11 +33,11 @@ metadata:
 data:
   # TODO 1: Set BENTOML_PORT to "3000"
   # YOUR CODE HERE
-  BENTOML_PORT: ""  # FILL IN: Port number as string
+  BENTOML_PORT: "3000"  # FILL IN: Port number as string
 
   # TODO 2: Set WORKERS to "2"
   # YOUR CODE HERE
-  WORKERS: ""  # FILL IN: Number of worker processes
+  WORKERS: "2"  # FILL IN: Number of worker processes
 
   LOG_LEVEL: "INFO"
   MODEL_LOAD_TIMEOUT: "30"
@@ -54,7 +54,7 @@ kind: Deployment
 metadata:
   # TODO 3: Set deployment name to "sentiment-api"
   # YOUR CODE HERE
-  name: ""  # FILL IN: Deployment name
+  name: "sentiment-api"  # FILL IN: Deployment name
 
   labels:
     app: sentiment-api
@@ -66,7 +66,7 @@ spec:
   # Initial replicas (HPA will adjust this dynamically)
   # TODO 4: Set replicas to 2
   # YOUR CODE HERE
-  replicas: 0  # FILL IN: Number of initial replicas
+  replicas: 1  # FILL IN: Number of initial replicas
 
   strategy:
     type: RollingUpdate
@@ -81,7 +81,8 @@ spec:
     # TODO 5: Add matchLabels with app: sentiment-api
     # YOUR CODE HERE
     matchLabels:
-      # FILL IN: Label selector
+      app: sentiment-api
+
 
   template:
     metadata:
@@ -89,6 +90,9 @@ spec:
         # TODO 6: Add pod labels - app: sentiment-api, version: v1, environment: production
         # YOUR CODE HERE
         # FILL IN: Pod labels (3 labels needed)
+        app: sentiment-api
+        version: v1
+        environment: production
 
       annotations:
         prometheus.io/scrape: "true"
@@ -125,36 +129,39 @@ spec:
                 matchExpressions:
                 # TODO 9: Match pods with app=sentiment-api
                 # YOUR CODE HERE
-                - key: ""  # FILL IN: Label key to match
+                - key: app  # FILL IN: Label key to match
                   operator: In
                   values:
-                  - ""  # FILL IN: Label value to match
+                  - "sentiment-api"  # FILL IN: Label value to match
 
               # TODO 10: Set topologyKey to "kubernetes.io/hostname"
               # This spreads pods across different nodes
               # YOUR CODE HERE
-              topologyKey: ""  # FILL IN: Topology key for node spreading
+              topologyKey: "kubernetes.io/hostname"  # FILL IN: Topology key for node spreading
 
       terminationGracePeriodSeconds: 30
 
       containers:
       - # TODO 11: Set container name to "sentiment-api"
         # YOUR CODE HERE
-        name: ""  # FILL IN: Container name
+        name: "sentiment-api"  # FILL IN: Container name
 
         # TODO 12: Set image to "sentiment_service:v1"
         # YOUR CODE HERE
-        image: ""  # FILL IN: Docker image name
-
+        #image: "sentiment_service:v1"  # FILL IN: Docker image name
         # TODO 13: Set imagePullPolicy to "Never" (for kind)
         # YOUR CODE HERE
-        imagePullPolicy: ""  # FILL IN: Pull policy (Never, Always, or IfNotPresent)
+        #imagePullPolicy: "Never"  # FILL IN: Pull policy (Never, Always, or IfNotPresent)
+
+        # Since we cannot load a podman image into kind yet:
+        image: "rfashwal/sentiment_service:v1"
+        imagePullPolicy: "IfNotPresent"
 
         ports:
         - name: http
           # TODO 14: Set containerPort to 3000
           # YOUR CODE HERE
-          containerPort: 0  # FILL IN: Port number
+          containerPort: 3000  # FILL IN: Port number
 
           protocol: TCP
 
@@ -184,11 +191,11 @@ spec:
           requests:
             # TODO 17: Set CPU request to "500m" (0.5 cores)
             # YOUR CODE HERE
-            cpu: ""  # FILL IN: CPU request
+            cpu: "500m"  # FILL IN: CPU request
 
             # TODO 18: Set memory request to "1Gi"
             # YOUR CODE HERE
-            memory: ""  # FILL IN: Memory request
+            memory: "1Gi"  # FILL IN: Memory request
 
           limits:
             cpu: "1000m"
@@ -217,8 +224,8 @@ spec:
         # YOUR CODE HERE
         startupProbe:
           httpGet:
-            path: ""  # FILL IN: Health check endpoint (/healthz)
-            port: 0   # FILL IN: Port number (3000)
+            path: "/healthz"  # FILL IN: Health check endpoint (/healthz)
+            port: 3000   # FILL IN: Port number (3000)
           initialDelaySeconds: 10
           periodSeconds: 5
           timeoutSeconds: 3
@@ -239,8 +246,8 @@ spec:
         # YOUR CODE HERE
         readinessProbe:
           httpGet:
-            path: ""  # FILL IN: Health check endpoint (/healthz)
-            port: 0   # FILL IN: Port number (3000)
+            path: "/healthz"  # FILL IN: Health check endpoint (/healthz)
+            port: 3000 # FILL IN: Port number (3000)
           initialDelaySeconds: 0
           periodSeconds: 5
           timeoutSeconds: 3
@@ -303,8 +310,8 @@ spec:
     kind: Deployment
     name: sentiment-api
 
-  minReplicas: 2
-  maxReplicas: 10
+  minReplicas: 1
+  maxReplicas: 1
 
   metrics:
   # Scale based on CPU utilization

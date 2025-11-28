@@ -33,9 +33,9 @@ data:
     # TODO 1: Enable anonymous access (for workshop only!)
     # HINT: Set enabled = true and org_role = Viewer
     [auth.anonymous]
-    enabled = ????      # YOUR CODE HERE (true or false)
-    org_role = ????     # YOUR CODE HERE (Viewer, Editor, or Admin)
-
+    enabled = true
+    org_role = Viewer     # YOUR CODE HERE (Viewer, Editor, or Admin)
+    
     [security]
     admin_user = admin
     admin_password = admin
@@ -59,7 +59,7 @@ data:
       access: proxy
       # TODO 2: Set Prometheus URL
       # HINT: Use the Kubernetes service name: http://prometheus:9090
-      url: ????  # YOUR CODE HERE
+      url: http://prometheus:9090
 
       isDefault: true
       editable: false
@@ -137,7 +137,7 @@ data:
               {
                 // TODO 3: Write PromQL for 4xx error rate
                 // HINT: rate(gateway_http_requests_total{status=~"4.."}[5m])
-                "expr": "????",  # YOUR CODE HERE
+                "expr": "rate(gateway_http_requests_total{status=~\"4..\"}[5m])",
                 "legendFormat": "4xx errors",
                 "refId": "A"
               },
@@ -170,7 +170,7 @@ data:
               {
                 // TODO 4: Write PromQL for P95 latency
                 // HINT: histogram_quantile(0.95, sum by (le) (rate(gateway_http_request_duration_seconds_bucket[5m])))
-                "expr": "????",  # YOUR CODE HERE
+                "expr": "histogram_quantile(0.95, rate(gateway_http_request_duration_seconds_bucket[5m]))",
                 "legendFormat": "P95",
                 "refId": "A"
               },
@@ -195,7 +195,7 @@ data:
               {
                 // TODO 5: Write PromQL for ML backend P95 latency
                 // HINT: Similar to TODO 4, but change "gateway_http_request_duration" to "gateway_backend_request_duration"
-                "expr": "????",  # YOUR CODE HERE
+                "expr": "histogram_quantile(0.95, rate(gateway_backend_request_duration_seconds_bucket[5m]))",
                 "legendFormat": "ML Service P95",
                 "refId": "A"
               }
@@ -338,7 +338,7 @@ spec:
     targetPort: 3000
     # TODO 6: Set NodePort for accessing Grafana
     # HINT: Use port 30300 (will be accessible at http://localhost:30300 in kind)
-    nodePort: ????  # YOUR CODE HERE
+    nodePort: 30300
 
 # =============================================================================
 # KEY CONCEPTS

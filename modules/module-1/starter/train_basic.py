@@ -34,11 +34,14 @@ def load_model(model_name: str):
     # TODO 1: Load the model with 2 labels (positive/negative sentiment)
     # Hint: Use AutoModelForSequenceClassification.from_pretrained()
     # Hint: Set num_labels=2 for binary classification
-    model = None  # TODO: Replace with actual model loading
+    model = AutoModelForSequenceClassification.from_pretrained(
+        model_name,
+        num_labels=2
+    )
 
     # TODO 2: Load the tokenizer
     # Hint: Use AutoTokenizer.from_pretrained()
-    tokenizer = None  # TODO: Replace with actual tokenizer loading
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     print(f"✓ Model loaded: {model_name}")
     print(f"  - Parameters: ~{model.num_parameters() / 1e6:.1f}M")
@@ -56,7 +59,7 @@ def load_dataset_imdb(train_samples: int = 1000, test_samples: int = 100):
 
     # TODO 3: Load the IMDB dataset from Hugging Face
     # Hint: Use load_dataset("imdb")
-    dataset = None  # TODO: Replace with actual dataset loading
+    dataset = load_dataset("imdb")
 
     # Select subset for quick training
     train_dataset = dataset["train"].select(range(train_samples))
@@ -83,7 +86,12 @@ def tokenize_datasets(train_dataset, test_dataset, tokenizer, max_length: int = 
         # TODO 4: Tokenize the text with padding and truncation
         # Hint: Return tokenizer(examples["text"], padding="max_length",
         #       truncation=True, max_length=max_length)
-        pass  # TODO: Replace with actual tokenization
+        return tokenizer(
+            examples["text"], 
+            padding="max_length",
+            truncation=True, 
+            max_length=max_length
+        )
 
     # Apply tokenization to datasets
     train_dataset = train_dataset.map(tokenize_function, batched=True)
@@ -107,12 +115,24 @@ def train_model(model, train_dataset, test_dataset, epochs: int = 2, batch_size:
     #       per_device_train_batch_size=batch_size,
     #       per_device_eval_batch_size=batch_size,
     #       logging_steps=50, eval_strategy="epoch"
-    training_args = None  # TODO: Replace with TrainingArguments
+    training_args = TrainingArguments(
+        output_dir="./results",
+        num_train_epochs=epochs,
+        per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size,
+        logging_steps=50,
+        eval_strategy="epoch"
+    )
 
     # TODO 6: Create Trainer with model, args, and datasets
     # Hint: Use Trainer(model=model, args=training_args,
     #       train_dataset=train_dataset, eval_dataset=test_dataset)
-    trainer = None  # TODO: Replace with Trainer
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=test_dataset
+    )
 
     # Start training
     print(f"✓ Training configuration set")
@@ -123,7 +143,7 @@ def train_model(model, train_dataset, test_dataset, epochs: int = 2, batch_size:
 
     # TODO 7: Train the model
     # Hint: Call trainer.train()
-    # TODO: Add training call here
+    trainer.train()
 
     print("=" * 70)
     print("✓ Training complete!")
@@ -140,7 +160,7 @@ def evaluate_model(trainer):
 
     # TODO 8: Evaluate the model
     # Hint: Call trainer.evaluate()
-    eval_results = None  # TODO: Replace with actual evaluation
+    eval_results = trainer.evaluate()
 
     # Display results
     print(f"✓ Evaluation complete!")
@@ -159,11 +179,11 @@ def save_model(trainer, tokenizer, output_dir: str = "./sentiment_model"):
 
     # TODO 9: Save the model
     # Hint: Use trainer.save_model(output_dir)
-    # TODO: Add model saving here
+    trainer.save_model(output_dir)
 
     # TODO 10: Save the tokenizer
     # Hint: Use tokenizer.save_pretrained(output_dir)
-    # TODO: Add tokenizer saving here
+    tokenizer.save_pretrained(output_dir)
 
     print(f"✓ Model saved to: {output_dir}")
     print(f"\nTo load this model later:")

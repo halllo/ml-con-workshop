@@ -34,7 +34,7 @@ metadata:
 
 spec:
   # Start with 2 replicas for HA
-  replicas: 2
+  replicas: 1
 
   # Update strategy
   strategy:
@@ -61,8 +61,8 @@ spec:
     spec:
       containers:
       - name: api-gateway
-        image: api-gateway:v1
-        imagePullPolicy: Never  # For kind local testing
+        image: rfashwal/api-gateway:v1
+        imagePullPolicy: IfNotPresent  # For kind local testing
 
         ports:
         - name: http
@@ -152,8 +152,8 @@ spec:
     kind: Deployment
     name: api-gateway
 
-  minReplicas: 2
-  maxReplicas: 10
+  minReplicas: 1
+  maxReplicas: 1
 
   metrics:
   - type: Resource

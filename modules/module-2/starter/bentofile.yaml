@@ -1,0 +1,30 @@
+# Bentofile for Sentiment Analysis Service
+# This file defines how to build a Bento (deployable package)
+
+service: "service_with_validation:SentimentService"
+description: "Sentiment Analysis API - MLOps Workshop Module 2"
+labels:
+  owner: mlops-workshop
+  project: sentiment-analysis
+  module: module-2
+
+# Include these files in the Bento
+include:
+  - "*.py"
+
+# Python dependencies
+python:
+  packages:
+    - transformers>=4.35.0
+    - torch>=2.0.0
+    - pydantic>=2.0.0
+    - mlflow>=2.8.0
+
+# Docker configuration
+docker:
+  distro: debian
+  python_version: "3.11"
+  system_packages:
+    - git
+  env:
+    TRANSFORMERS_CACHE: "/tmp/transformers_cache"
