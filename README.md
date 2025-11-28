@@ -18,3 +18,6 @@ This 6-hour intensive workshop teaches you to deploy and maintain machine learni
 - GitHub Codespaces: Pre-configured cloud environment
 
 Get started with Module 1 to begin your MLOps journey!
+
+## Repo https://github.com/rfashwall/ml-con-workshop
+<img width="835" height="829" alt="repo" src="https://github.com/user-attachments/assets/ff50adf2-2470-4f9f-8952-7f328c693433" />
